@@ -1,0 +1,774 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#07100e" />
+  <title>RunCast 잠실 — 1시간 러닝 판단</title>
+  <script>
+    if (location.protocol === 'file:' || location.hostname === 'localhost') {
+      location.replace(`http://127.0.0.1:4173/${location.search}${location.hash}`);
+    } else {
+      const view = new URLSearchParams(location.search).get('view');
+      if (view === 'mobile' || (view !== 'desktop' && matchMedia('(max-width: 767px)').matches)) {
+        location.replace(`/mobile.html${location.search}${location.hash}`);
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
+    :root {
+      --bg: #07100e; --panel: #0d1815; --panel-2: #111e1a; --line: rgba(235, 255, 247, .09);
+      --text: #f2f8f5; --muted: #92a79f; --mint: #b6f542; --mint-2: #69d88f;
+      --cyan: #68d8e8; --yellow: #f8c34e; --red: #ff6f61; --shadow: 0 22px 60px rgba(0, 0, 0, .28);
+      --radius: 22px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: "Noto Sans KR", sans-serif; }
+    body { background: radial-gradient(circle at 65% -20%, rgba(52, 134, 100, .17), transparent 38%), var(--bg); }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    .app { min-height: 100vh; padding: 0 24px 28px; }
+    .topbar { height: 76px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; gap: 13px; align-items: center; }
+    .brand-mark { width: 39px; height: 39px; border-radius: 13px; display: grid; place-items: center; color: #07100e; font-weight: 900; font-size: 13px; background: var(--mint); box-shadow: 0 0 32px rgba(182,245,66,.16); }
+    .brand h1 { margin: 0; font-size: 17px; letter-spacing: -.04em; }
+    .brand p { margin: 3px 0 0; color: var(--muted); font-size: 11px; letter-spacing: .02em; }
+    .top-actions { display: flex; align-items: center; gap: 10px; }
+    .clock { font-family: "DM Mono", monospace; color: #cddbd6; font-size: 13px; margin-right: 8px; }
+    .ghost-btn, .primary-btn, .route-chip, .small-btn { border: 1px solid var(--line); background: rgba(255,255,255,.035); border-radius: 13px; cursor: pointer; transition: .18s ease; }
+    .ghost-btn { width: 42px; height: 42px; display: grid; place-items: center; font-size: 17px; }
+    .ghost-btn:hover, .small-btn:hover { background: rgba(255,255,255,.08); transform: translateY(-1px); }
+    .primary-btn { min-height: 42px; padding: 0 17px; background: var(--mint); color: #09110f; font-weight: 800; border-color: var(--mint); }
+    .primary-btn:hover { filter: brightness(1.07); transform: translateY(-1px); }
+    .primary-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .spin { animation: spin .8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .workspace { display: grid; grid-template-columns: minmax(0, 1fr) 386px; gap: 18px; padding-top: 18px; }
+    .map-shell { min-height: 690px; height: calc(100vh - 122px); position: relative; overflow: hidden; background: #0a1513; border: 1px solid var(--line); border-radius: 28px; box-shadow: var(--shadow); }
+    #naverMap, #fallbackMap { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #fallbackMap { background: radial-gradient(circle at 65% 20%, rgba(45,103,82,.22), transparent 36%), #0b1714; }
+    .map-vignette { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(90deg, rgba(5,12,10,.2), transparent 24%, transparent 82%, rgba(5,12,10,.05)), linear-gradient(0deg, rgba(5,12,10,.22), transparent 25%); box-shadow: inset 0 0 0 1px rgba(7,16,14,.08); }
+    .map-toolbar { position: absolute; z-index: 5; top: 18px; left: 18px; right: 18px; display: flex; justify-content: space-between; align-items: start; pointer-events: none; }
+    .route-tabs, .map-mode { pointer-events: auto; display: flex; gap: 6px; background: rgba(7,16,14,.82); border: 1px solid var(--line); padding: 5px; border-radius: 15px; backdrop-filter: blur(14px); }
+    .route-chip { padding: 9px 12px; color: var(--muted); border-color: transparent; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .route-chip.active { background: #f0f7f3; color: #0b1512; }
+    .map-mode { padding: 9px 12px; color: #c7d6d0; font-size: 11px; align-items: center; }
+    .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 5px rgba(182,245,66,.09); }
+    .live-dot.demo { background: var(--yellow); box-shadow: 0 0 0 5px rgba(248,195,78,.09); }
+
+    .verdict { position: absolute; z-index: 6; left: 24px; bottom: 24px; width: min(430px, calc(100% - 48px)); padding: 24px; border: 1px solid rgba(255,255,255,.12); border-radius: 22px; background: rgba(8,18,15,.88); backdrop-filter: blur(18px); box-shadow: 0 20px 45px rgba(0,0,0,.3); }
+    .verdict-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .eyebrow { text-transform: uppercase; color: var(--mint); font: 500 10px/1.2 "DM Mono", monospace; letter-spacing: .13em; }
+    .confidence { color: var(--muted); font: 500 11px/1 "DM Mono", monospace; }
+    .verdict-scope { display: flex; align-items: center; gap: 8px; margin-top: 13px; color: #c7d6d0; font-size: 11px; }
+    .verdict-scope strong { padding: 5px 8px; border-radius: 8px; background: rgba(182,245,66,.1); color: var(--mint); font-size: 10px; }
+    .verdict h2 { margin: 10px 0 8px; font-size: clamp(25px, 3vw, 37px); line-height: 1.17; letter-spacing: -.055em; }
+    .verdict p { margin: 0; max-width: 360px; color: #b8c9c2; font-size: 13px; line-height: 1.65; }
+    .run-window { margin-top: 19px; display: flex; align-items: center; gap: 10px; }
+    .window-track { flex: 1; height: 7px; background: rgba(255,255,255,.08); border-radius: 99px; overflow: hidden; }
+    .window-fill { width: 56%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--mint), var(--yellow)); }
+    .run-window span { color: #dae7e2; font: 500 10px/1 "DM Mono", monospace; white-space: nowrap; }
+    .map-legend { position: absolute; z-index: 5; right: 20px; bottom: 24px; display: grid; gap: 8px; padding: 12px 13px; border-radius: 14px; background: rgba(7,16,14,.8); border: 1px solid var(--line); backdrop-filter: blur(12px); }
+    .legend-item { display: flex; align-items: center; gap: 8px; color: #adc0b8; font-size: 10px; }
+    .legend-swatch { width: 9px; height: 9px; border-radius: 50%; }
+    #radarFallbackOverlay { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .62; pointer-events: none; mix-blend-mode: screen; display: none; }
+    .radar-console { position: absolute; z-index: 8; top: 76px; right: 18px; width: min(330px, calc(100% - 36px)); padding: 13px 14px; border: 1px solid rgba(104,216,232,.24); border-radius: 17px; background: rgba(7,16,14,.9); box-shadow: 0 20px 48px rgba(0,0,0,.32); backdrop-filter: blur(16px); opacity: 0; transform: translateY(-8px); pointer-events: none; transition: .2s ease; }
+    .radar-console.open { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .radar-console-head, .radar-console-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .radar-console-head strong { font-size: 11px; letter-spacing: .02em; }
+    .radar-console-head span, .radar-console-foot { color: var(--muted); font: 500 9px/1.4 "DM Mono", monospace; }
+    .radar-controls { margin: 11px 0 9px; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; }
+    .radar-play { width: 34px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.055); cursor: pointer; }
+    .radar-frames { display: flex; align-items: center; gap: 5px; }
+    .radar-frame { flex: 1; height: 4px; border: 0; border-radius: 99px; background: rgba(255,255,255,.12); padding: 0; cursor: pointer; }
+    .radar-frame.loaded { background: rgba(104,216,232,.28); }
+    .radar-frame.active { background: var(--cyan); box-shadow: 0 0 12px rgba(104,216,232,.55); }
+    .radar-time { min-width: 44px; text-align: right; color: var(--cyan); font: 500 10px/1 "DM Mono", monospace; }
+    .radar-console-foot b { color: var(--cyan); font-weight: 500; }
+
+    .side { min-width: 0; display: flex; flex-direction: column; gap: 14px; height: calc(100vh - 122px); overflow: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+    .panel-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .panel-title h3 { margin: 0; font-size: 14px; letter-spacing: -.03em; }
+    .source-time { color: var(--muted); font: 400 10px/1 "DM Mono", monospace; }
+    .timeline { display: grid; gap: 8px; }
+    .time-card { min-height: 0; padding: 14px; border: 1px solid var(--line); border-radius: 15px; background: rgba(255,255,255,.025); transition: .18s ease; cursor: pointer; word-break: keep-all; }
+    .time-card.run-focus { border-color: rgba(182,245,66,.28); background: rgba(182,245,66,.055); }
+    .time-card.active { border-color: rgba(104,216,232,.62); box-shadow: inset 3px 0 #68d8e8; background: rgba(104,216,232,.07); }
+    .time-card.conflict { border-color: rgba(248,195,78,.48); box-shadow: inset 3px 0 var(--yellow); }
+    .time-card-top { display: grid; grid-template-columns: 52px minmax(0,1fr) auto; gap: 10px; align-items: center; }
+    .time-label strong { display: block; font: 500 13px/1.2 "DM Mono", monospace; }
+    .time-label span { display: block; margin-top: 5px; color: var(--muted); font-size: 9px; }
+    .wx-summary { min-width: 0; }
+    .wx-summary strong { display: block; font-size: 14px; letter-spacing: -.025em; }
+    .wx-summary span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .weather-now { text-align: right; }
+    .weather-now strong { display: block; font: 500 15px/1.2 "DM Mono", monospace; }
+    .weather-now span { display: block; margin-top: 4px; color: var(--muted); font-size: 8.5px; white-space: nowrap; }
+    .rain-metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin-top: 11px; }
+    .rain-metric { min-width: 0; padding: 9px 10px; border-radius: 10px; background: rgba(0,0,0,.15); border: 1px solid rgba(255,255,255,.045); }
+    .rain-metric span { display: block; color: var(--muted); font-size: 8.5px; }
+    .rain-metric strong { display: block; margin-top: 4px; font: 500 15px/1.15 "DM Mono", monospace; white-space: nowrap; }
+    .rain-metric small { color: #70837b; font-size: 7.5px; }
+    .forecast-source { margin: 9px 1px 0; color: var(--muted); font-size: 8.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .model-check { margin: 7px 0 0; padding: 7px 9px; border-radius: 9px; background: rgba(104,216,232,.055); color: #a8dce2; font-size: 8.5px; line-height: 1.4; }
+    .model-check.conflict { background: rgba(248,195,78,.07); color: var(--yellow); }
+    .model-check.nearby { background: rgba(200,216,132,.06); color: #c8d884; }
+    .model-check.reassuring { background: rgba(182,245,66,.055); color: #c8df8d; }
+    .model-consensus { margin-top: 8px; display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 8.5px; line-height: 1.4; }
+    .model-consensus strong { color: #cbd9d4; font-weight: 700; text-align: right; }
+    .run-advice { margin-top: 8px; padding: 9px 10px; border-radius: 10px; border: 1px solid var(--line); }
+    .run-advice strong { display: block; font-size: 10px; line-height: 1.35; }
+    .run-advice span { display: block; margin-top: 4px; color: var(--muted); font-size: 8.5px; line-height: 1.5; }
+    .run-advice.go { border-color: rgba(182,245,66,.2); background: rgba(182,245,66,.055); }
+    .run-advice.go strong { color: var(--mint); }
+    .run-advice.caution { border-color: rgba(248,195,78,.22); background: rgba(248,195,78,.055); }
+    .run-advice.caution strong { color: var(--yellow); }
+    .run-advice.avoid { border-color: rgba(255,111,97,.22); background: rgba(255,111,97,.055); }
+    .run-advice.avoid strong { color: #ff9388; }
+    .timeline-explainer { margin-top: 12px; padding: 11px 12px; border-radius: 12px; background: rgba(255,255,255,.022); border: 1px solid var(--line); }
+    .timeline-explainer strong { display: block; margin-bottom: 7px; color: #c6d5cf; font-size: 9px; }
+    .timeline-explainer p { margin: 4px 0 0; color: var(--muted); font-size: 8.5px; line-height: 1.5; }
+    .timeline-explainer b { color: #cbd9d4; font-weight: 700; }
+    .evidence-list { display: grid; gap: 10px; }
+    .evidence-row { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; }
+    .evidence-icon { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; background: rgba(255,255,255,.045); font-size: 12px; }
+    .evidence-row strong { display: block; font-size: 11px; }
+    .evidence-row p { margin: 3px 0 0; color: var(--muted); font-size: 9.5px; line-height: 1.4; }
+    .status-pill { border: 1px solid var(--line); border-radius: 99px; padding: 5px 8px; color: #b5c6bf; font: 500 9px/1 "DM Mono", monospace; }
+    .status-pill.warn { color: var(--yellow); border-color: rgba(248,195,78,.22); }
+    .status-pill.good { color: var(--mint-2); border-color: rgba(105,216,143,.22); }
+    .cctv-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+    .cctv-empty { grid-column: 1 / -1; min-height: 92px; display: grid; place-items: center; padding: 16px; border: 1px dashed rgba(255,255,255,.1); border-radius: 14px; color: var(--muted); text-align: center; font-size: 10px; line-height: 1.6; background: rgba(255,255,255,.018); }
+    .cctv-card { position: relative; display: block; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.025); color: inherit; text-decoration: none; cursor: pointer; transition: .18s ease; }
+    .cctv-card:hover, .cctv-card:focus-visible { border-color: rgba(104,216,232,.38); background: rgba(104,216,232,.055); transform: translateY(-1px); outline: none; }
+    .cctv-card .sector { color: var(--muted); font: 500 9px/1 "DM Mono", monospace; text-transform: uppercase; }
+    .cctv-card strong { display: block; margin: 8px 0 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+    .cctv-card p { height: 29px; overflow: hidden; margin: 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
+    .cctv-open { display: block; margin-top: 7px; color: var(--cyan); font-size: 8.5px; font-weight: 700; }
+    .cctv-state { position: absolute; right: 10px; top: 10px; width: 8px; height: 8px; border-radius: 50%; background: #74817c; }
+    .cctv-state.rain { background: var(--cyan); box-shadow: 0 0 12px rgba(104,216,232,.6); }
+    .cctv-state.dry { background: var(--mint-2); }
+    .analysis-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .analysis-actions .primary-btn { flex: 1; }
+    .analysis-hint { margin: 8px 2px 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+    .analysis-hint.ready { color: var(--mint-2); }
+    .small-btn { padding: 0 12px; min-height: 38px; color: #c7d6d0; font-size: 11px; }
+    .aviation-panel { border-color: rgba(104,216,232,.15); }
+    .aviation-body { max-height: 190px; overflow: auto; display: grid; gap: 8px; scrollbar-width: thin; }
+    .code-line { padding: 10px; border-radius: 10px; background: rgba(0,0,0,.18); color: #aabcb5; font: 400 9px/1.55 "DM Mono", monospace; word-break: break-word; }
+    .demo-banner { padding: 11px 13px; border-radius: 13px; border: 1px solid rgba(248,195,78,.2); background: rgba(248,195,78,.06); color: #ddc27e; font-size: 10px; line-height: 1.45; }
+    .source-links { display: grid; gap: 7px; }
+    .source-link { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 10px 11px; border: 1px solid var(--line); border-radius: 11px; color: #d5e1dc; text-decoration: none; background: rgba(255,255,255,.018); transition: .18s ease; }
+    .source-link:hover { border-color: rgba(104,216,232,.28); background: rgba(104,216,232,.045); }
+    .source-link strong { display: block; font-size: 9.5px; }
+    .source-link span { display: block; margin-top: 3px; color: var(--muted); font-size: 8px; }
+    .source-link i { color: var(--cyan); font-style: normal; font-size: 11px; }
+
+    .modal-backdrop { position: fixed; z-index: 40; inset: 0; display: none; place-items: center; padding: 20px; background: rgba(2,8,6,.72); backdrop-filter: blur(8px); }
+    .modal-backdrop.open { display: grid; }
+    .modal { width: min(560px, 100%); max-height: 90vh; overflow: auto; padding: 25px; background: #101d19; border: 1px solid rgba(255,255,255,.12); border-radius: 24px; box-shadow: var(--shadow); }
+    .modal-head { display: flex; justify-content: space-between; gap: 20px; align-items: start; }
+    .modal h2 { margin: 0; font-size: 20px; letter-spacing: -.04em; }
+    .modal .intro { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 7px 0 21px; }
+    .field { display: block; margin-bottom: 13px; }
+    .field span { display: block; color: #c1d0ca; font-size: 10px; font-weight: 700; margin-bottom: 7px; }
+    .field input { width: 100%; height: 43px; padding: 0 12px; color: var(--text); border: 1px solid var(--line); border-radius: 11px; outline: none; background: rgba(0,0,0,.18); font-family: "DM Mono", monospace; font-size: 11px; }
+    .field input:focus { border-color: rgba(182,245,66,.45); }
+    .field small { display: block; color: #70837b; font-size: 9px; margin-top: 6px; line-height: 1.5; }
+    .modal-footer { margin-top: 20px; display: flex; gap: 9px; justify-content: flex-end; }
+    .connection-list { display: grid; gap: 10px; }
+    .connection-row { min-height: 54px; padding: 0 15px; display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line); border-radius: 13px; background: rgba(0,0,0,.14); }
+    .connection-row span { color: #c1d0ca; font-size: 11px; font-weight: 700; }
+    .connection-row b { font-size: 10px; }
+    .connection-row b.connected { color: var(--lime); }
+    .connection-row b.missing { color: var(--muted); }
+    .security-note { margin: 16px 0 0; padding: 13px; color: #8fa39a; background: rgba(105,216,143,.07); border-radius: 12px; font-size: 10px; line-height: 1.6; }
+    .toast { position: fixed; z-index: 60; left: 50%; bottom: 26px; transform: translate(-50%, 18px); padding: 11px 15px; border: 1px solid var(--line); border-radius: 12px; background: #17251f; color: #d9e5e0; font-size: 11px; opacity: 0; pointer-events: none; transition: .22s ease; box-shadow: var(--shadow); }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+    .naver-marker { min-width: 30px; height: 30px; display: grid; place-items: center; padding: 0 8px; border: 2px solid rgba(255,255,255,.82); border-radius: 99px; background: #13231d; color: white; box-shadow: 0 6px 18px rgba(0,0,0,.35); font: 800 10px/1 sans-serif; }
+    .naver-marker.route { background: var(--mint); color: #0b1512; border-color: white; }
+    .naver-marker.rain { background: #348c9b; }
+    .naver-marker.dry { background: #268653; }
+
+    @media (max-width: 1050px) {
+      .workspace { grid-template-columns: 1fr; }
+      .map-shell { height: 680px; min-height: 0; }
+      .side { height: auto; overflow: visible; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .aviation-panel { grid-column: 1 / -1; }
+    }
+    @media (max-width: 680px) {
+      .app { padding: 0 12px 18px; }
+      .topbar { height: 66px; }
+      .brand p, .clock { display: none; }
+      .workspace { padding-top: 12px; }
+      .map-shell { height: 620px; border-radius: 21px; }
+      .map-toolbar { top: 10px; left: 10px; right: 10px; }
+      .route-tabs { max-width: calc(100% - 82px); overflow-x: auto; }
+      .route-chip { padding: 8px 10px; }
+      .map-mode { font-size: 0; width: 58px; justify-content: center; }
+      .map-mode::after { content: "MAP"; font-size: 9px; }
+      .verdict { left: 12px; bottom: 12px; width: calc(100% - 24px); padding: 19px; }
+      .map-legend { display: none; }
+      .radar-console { top: 67px; right: 10px; width: min(310px, calc(100% - 20px)); }
+      .side { grid-template-columns: 1fr; }
+      .aviation-panel { grid-column: auto; }
+      .cctv-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">RC</div>
+        <div><h1>RunCast 잠실</h1><p>1시간 러닝과 당일 계획을 위한 강수 판단</p></div>
+      </div>
+      <div class="top-actions">
+        <div class="clock" id="clock">--:--:-- KST</div>
+        <button class="ghost-btn" id="settingsBtn" aria-label="데이터 설정">⚙</button>
+        <button class="primary-btn" id="refreshBtn">지금 확인</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="map-shell" aria-label="서울 강수와 CCTV 지도">
+        <div id="naverMap"></div>
+        <canvas id="fallbackMap"></canvas>
+        <img id="radarFallbackOverlay" alt="지도 위 기상청 강수예측" />
+        <div class="map-vignette"></div>
+        <div class="map-toolbar">
+          <div class="route-tabs" aria-label="러닝 코스 선택">
+            <button class="route-chip active" data-route="seokchon">석촌호수</button>
+            <button class="route-chip" data-route="olympic">올림픽공원</button>
+            <button class="route-chip" data-route="hanriver">잠실 한강</button>
+          </div>
+          <div class="map-mode"><span class="live-dot demo" id="mapDot"></span><span id="mapModeText">미리보기 지도</span></div>
+        </div>
+
+        <aside class="radar-console" id="radarConsole" aria-label="지도 레이더 에코 재생 상태">
+          <div class="radar-console-head"><strong id="radarProduct">강수대 이동 예측</strong><span id="radarState">LOADING</span></div>
+          <div class="radar-controls">
+            <button class="radar-play" id="radarPlay" aria-label="레이더 재생 일시정지">Ⅱ</button>
+            <div class="radar-frames" id="radarFrames"></div>
+            <span class="radar-time" id="radarFrameLabel">T+00m</span>
+          </div>
+          <div class="radar-console-foot"><span id="radarCadence">기상청 · 5분 간격</span><b>해안선 기준 위치 검증</b></div>
+        </aside>
+
+        <article class="verdict" aria-live="polite">
+          <div class="verdict-top"><span class="eyebrow">30분 뒤 출발 · 1시간 러닝 판단</span><span class="confidence" id="confidence">신뢰도 --%</span></div>
+          <div class="verdict-scope"><strong id="verdictRoute">석촌호수</strong><span>출발부터 복귀까지 60분을 확인합니다</span></div>
+          <h2 id="verdictTitle">1시간 달려도 되는지 확인 중</h2>
+          <p id="verdictReason">출발 시각부터 복귀 시각까지의 예보와 접근 방향 CCTV를 함께 확인합니다.</p>
+          <div class="run-window"><span>30분 뒤 출발</span><div class="window-track"><div class="window-fill"></div></div><span>90분 뒤 복귀</span></div>
+        </article>
+
+        <div class="map-legend">
+          <div class="legend-item"><span class="legend-swatch" style="background:#b6f542"></span>러닝 코스</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:linear-gradient(135deg,#36aeea,#ffe45c,#ef4e4e)"></span>레이더 에코</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:#68d8e8"></span>강수 확인 CCTV</div>
+          <div class="legend-item"><span class="legend-swatch" style="background:#f8c34e"></span>접근 강수대</div>
+        </div>
+      </section>
+
+      <aside class="side">
+        <section class="panel">
+          <div class="panel-title"><h3>강수 타임라인</h3><span class="source-time" id="updatedAt">--:-- 기준</span></div>
+          <div class="timeline" id="timeline"></div>
+          <div class="timeline-explainer"><strong>지도 강수 영상은 이렇게 읽어요</strong><p><b>MAPLE</b> · +30분·+1시간은 현재 강수대의 이동을 우선 봅니다.</p><p><b>기상청 블랜딩</b> · +3·+6·+9시간은 MAPLE과 KLAPS를 결합한 공식 예측장을 사용합니다.</p><p><b>종합 위험도</b> · 기상청 확률과 ECMWF·GFS·ICON 확률의 단순 평균이며 학습된 확률은 아닙니다.</p></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title"><h3>판단 근거</h3><span class="source-time">가중치순</span></div>
+          <div class="evidence-list" id="evidenceList"></div>
+        </section>
+
+        <section class="panel aviation-panel">
+          <div class="panel-title"><h3>METAR / TAF</h3><span class="source-time" id="aviationStatus">RKSM · RKSS · RKSI</span></div>
+          <div class="aviation-body" id="aviationBody"><div class="code-line">성남·김포·인천 공항 자료를 불러오는 중…</div></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title"><h3>방향별 CCTV</h3><span class="source-time" id="cctvCount">0 CAM</span></div>
+          <div class="cctv-grid" id="cctvGrid"></div>
+          <div class="analysis-actions">
+            <button class="primary-btn" id="analyzeBtn" disabled>노면 CCTV AI 분석</button>
+            <button class="small-btn" id="radarBtn">기상청 레이더 ↗</button>
+          </div>
+          <p class="analysis-hint" id="analysisHint">분석 준비 상태를 확인하는 중…</p>
+        </section>
+
+        <div class="demo-banner" id="demoBanner">기상청 실시간 예보를 받지 못해 시각화 확인용 샘플 예보를 표시 중입니다. 연결되지 않은 CCTV는 표시와 판단에서 제외됩니다.</div>
+
+        <section class="panel">
+          <div class="panel-title"><h3>참고 자료 원문</h3><span class="source-time">새 창에서 열기</span></div>
+          <div class="source-links">
+            <a class="source-link" href="https://www.data.go.kr/data/15084084/openapi.do" target="_blank" rel="noopener"><span><strong>기상청 단기·초단기예보 API</strong><span>강수확률·예상 강수량·기온·습도</span></span><i>↗</i></a>
+            <a class="source-link" href="https://www.weather.go.kr/w/image/vshrt/rain.do?itv=0.5&amp;mapType=gis&amp;timeTerm=5" target="_blank" rel="noopener"><span><strong>기상청 초단기 강수예측</strong><span>공식 지도에서 강수대 직접 확인</span></span><i>↗</i></a>
+            <a class="source-link" href="https://apihub.kma.go.kr/apiList.do?apiMov=1.+%EB%A0%88%EC%9D%B4%EB%8D%94%ED%95%A9%EC%84%B1%EC%9E%90%EB%A3%8C+%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C&amp;seqApi=5&amp;seqApiSub=266" target="_blank" rel="noopener"><span><strong>기상청 강수예측 영상 API</strong><span>MAPLE·KLAPS 원자료 설명</span></span><i>↗</i></a>
+            <a class="source-link" href="https://open-meteo.com/en/docs" target="_blank" rel="noopener"><span><strong>Open-Meteo 다중모델</strong><span>ECMWF·GFS·JMA·ICON·KMA 비교</span></span><i>↗</i></a>
+            <a class="source-link" href="https://amo.kma.go.kr/weather/airport.do?icaoCode=RKSM" target="_blank" rel="noopener"><span><strong>성남 서울공항 기상</strong><span>잠실 남쪽 METAR·TAF 직접 확인</span></span><i>↗</i></a>
+            <a class="source-link" href="https://amo.kma.go.kr/weather/airport.do?icaoCode=RKSS" target="_blank" rel="noopener"><span><strong>김포공항 기상</strong><span>METAR·TAF 직접 확인</span></span><i>↗</i></a>
+            <a class="source-link" href="https://amo.kma.go.kr/weather/airport.do?icaoCode=RKSI" target="_blank" rel="noopener"><span><strong>인천공항 기상</strong><span>METAR·TAF 직접 확인</span></span><i>↗</i></a>
+            <a class="source-link" href="https://www.its.go.kr/opendata/intro" target="_blank" rel="noopener"><span><strong>국가교통정보센터 CCTV</strong><span>현장영상 오픈데이터 안내</span></span><i>↗</i></a>
+            <a class="source-link" href="https://map.naver.com/" target="_blank" rel="noopener"><span><strong>네이버 지도</strong><span>위치와 주변 지형 직접 확인</span></span><i>↗</i></a>
+          </div>
+        </section>
+
+      </aside>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal">
+      <div class="modal-head"><div><h2 id="settingsTitle">실시간 자료 연결</h2><p class="intro" id="settingsIntro">키 값은 브라우저로 보내지 않고 서버 환경변수에서만 사용합니다.</p></div><button class="ghost-btn" id="closeSettings" aria-label="닫기">×</button></div>
+      <div class="connection-list" id="connectionList" aria-live="polite"></div>
+      <p class="security-note">Naver Maps Client ID는 지도 SDK용 공개 식별자입니다. 기상청 동네예보·강수영상·ITS 키는 값 대신 연결 여부만 표시합니다.</p>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const ROUTES = {
+      seokchon: { name: '석촌호수', lat: 37.5082, lon: 127.1001 },
+      olympic: { name: '올림픽공원', lat: 37.5207, lon: 127.1215 },
+      hanriver: { name: '잠실 한강', lat: 37.5197, lon: 127.0857 }
+    };
+    // 이전 버전이 브라우저에 저장했던 비밀 키를 더 이상 사용하지 않고 제거합니다.
+    localStorage.removeItem('runcast.keys');
+    const state = {
+      route: 'seokchon', mapHorizon: 30, radarOpen: true, radarPlaying: true, data: null, loading: false, analyzing: false,
+      keys: {}, configured: {},
+      naverMap: null, overlays: [], radarOverlay: null, radarTimer: null, radarFrames: [], radarFrameIndex: 0, radarLoadToken: 0,
+      codex: null, runtime: { mode: 'local', aiEnabled: true, aiLocalOnly: true }
+    };
+    const $ = (selector) => document.querySelector(selector);
+    const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+    function escapeHtml(value = '') {
+      return String(value).replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+    }
+    function toast(message) {
+      const node = $('#toast'); node.textContent = message; node.classList.add('show');
+      clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.remove('show'), 3200);
+    }
+    function formatTime(date = new Date()) {
+      return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
+    }
+    function tickClock() {
+      $('#clock').textContent = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(new Date()) + ' KST';
+    }
+
+    function forecastSuggestsRain(item) { return Boolean(item.rain || item.probabilityRain || (item.runAssessment?.combinedRisk ?? 0) >= 50); }
+    function rainCopy(item) {
+      const advice = item.runAssessment;
+      if (advice?.level === 'go') {
+        if ((advice.expectedAmount || 0) >= .2) return '이슬비 수준 · 1시간 가능';
+        return '1시간 러닝하기 좋은 편';
+      }
+      if (advice?.level === 'caution' && (advice.windowPeak || 0) < 3) return '젖어도 괜찮다면 1시간 가능';
+      if (item.radarConflict) return '비 가능성 확인 필요';
+      if (!item.rain && item.radarNearbySignal) return '주변 강수대 주의';
+      if (item.unavailable || item.level === 'unknown') return '자료 없음';
+      if (item.probabilityRain && item.probabilityLevel === 'light') return '약한 비 가능';
+      if (item.probabilityRain) return '비 가능성 있음';
+      if (item.level === 'heavy') return '강한 비 예상';
+      if (item.level === 'moderate') return '비 예상';
+      if (item.level === 'light') return '약한 비 가능';
+      if (Number.isFinite(item.probability) && item.probability >= 30) return '비 가능성 낮음';
+      return '비 없음';
+    }
+    function horizonLabel(minutes) {
+      return ({ 30: '+30m', 60: '+1h', 180: '+3h', 360: '+6h', 540: '+9h' })[minutes] || `+${Math.round(minutes / 60)}h`;
+    }
+    function levelChance(item) {
+      if (Number.isFinite(item.probability)) return item.probability;
+      return null;
+    }
+    function ageLabel(minutes) {
+      if (!Number.isFinite(minutes)) return '';
+      if (minutes < 90) return `${minutes}분 전 발표`;
+      return `${Math.floor(minutes / 60)}시간 전 발표`;
+    }
+    function radarEvidenceCopy(item) {
+      if (!item.radarChecked) return null;
+      const forecastRain = forecastSuggestsRain(item);
+      const advice = item.runAssessment;
+      if (advice?.level === 'go') {
+        if (item.radarLocalSignal) return { text: '잠실에 약한 강수 신호가 있지만 예상량은 1mm/h 이하입니다.', klass: 'nearby' };
+        if (item.radarNearbySignal) return { text: '주변에 약한 강수대가 있지만 잠실 직접 신호는 없고 예상량도 적습니다.', klass: 'reassuring' };
+        if (forecastRain) return { text: '기상청 확률은 높지만 강수 영상과 다중모델은 잠실의 실질 강수 위험을 낮게 봅니다.', klass: 'reassuring' };
+        return { text: '예보와 강수 영상 모두 잠실 주변을 건조하게 봅니다.', klass: 'reassuring' };
+      }
+      if (item.radarLocalSignal && forecastRain) return { text: '예보와 강수 영상 모두 잠실에 비를 예상합니다.', klass: '' };
+      if (item.radarLocalSignal) return { text: '예보는 건조하지만 강수 영상에는 잠실 비 신호가 있습니다.', klass: 'conflict' };
+      if (item.radarNearbySignal && forecastRain) return { text: '잠실의 직접 신호는 없지만 주변에 강수대가 있습니다.', klass: 'nearby' };
+      if (item.radarNearbySignal) return { text: '잠실은 건조하지만 주변 약 25km 안에 강수대가 있습니다.', klass: 'nearby' };
+      if (forecastRain) return { text: '예보에는 비가 있지만 강수 영상에는 잠실 주변 신호가 없습니다.', klass: 'conflict' };
+      return { text: '예보와 강수 영상 모두 잠실 주변을 건조하게 봅니다.', klass: '' };
+    }
+
+    function modelConsensusCopy(item) {
+      const model = item.multiModel;
+      const assessment = item.runAssessment;
+      if (!model) return null;
+      const probability = Number.isFinite(assessment?.combinedRisk) ? `${assessment.combinedRisk}%` : '--';
+      const votes = `${model.wetVotes || 0}/${model.availableModels || 0}개 모델 비 예상`;
+      const range = Number.isFinite(model.probabilityMin) && Number.isFinite(model.probabilityMax)
+        ? `확률 범위 ${model.probabilityMin}~${model.probabilityMax}%` : '확률 자료 일부 없음';
+      return { probability, votes, range };
+    }
+
+    function renderTimeline(items) {
+      $('#timeline').innerHTML = items.map((item) => {
+        const copy = rainCopy(item);
+        const when = new Date(Date.now() + item.minutes * 60000);
+        const value = (number, suffix = '') => Number.isFinite(number) ? `${number}${suffix}` : '--';
+        const probability = levelChance(item);
+        const chance = Number.isFinite(probability) ? `${probability}%` : '--';
+        const integratedRisk = Number.isFinite(item.runAssessment?.combinedRisk) ? `${item.runAssessment.combinedRisk}%` : chance;
+        const amount = item.unavailable ? '--' : escapeHtml(item.probabilityAmountText || item.amountText || (item.mm > 0 ? `${item.mm} mm` : '0 mm'));
+        const validTime = item.sourceTime ? `${formatTime(new Date(item.sourceTime))} 유효` : '유효시각 없음';
+        const issueAge = ageLabel(item.issueAgeMinutes);
+        const radarEvidence = radarEvidenceCopy(item);
+        const consensus = modelConsensusCopy(item);
+        const advice = item.runAssessment;
+        return `<article class="time-card ${item.minutes <= 60 ? 'run-focus' : ''} ${item.minutes === state.mapHorizon ? 'active' : ''} ${item.radarConflict && advice?.level !== 'go' ? 'conflict' : ''}" data-minutes="${item.minutes}" tabindex="0" role="button" aria-label="${horizonLabel(item.minutes)} 지도에 표시">
+          <div class="time-card-top"><div class="time-label"><strong>${horizonLabel(item.minutes)}</strong><span>${formatTime(when)}</span></div><div class="wx-summary"><strong>${copy}</strong><span>${validTime}</span></div><div class="weather-now"><strong>${value(item.temperature, '°')}</strong><span>습도 ${value(item.humidity, '%')} · 바람 ${value(item.windSpeed, 'm/s')}</span></div></div>
+          ${advice ? `<div class="run-advice ${escapeHtml(advice.level)}"><strong>${escapeHtml(advice.label)}</strong><span>${escapeHtml(advice.reason)}</span></div>` : ''}
+          <div class="rain-metrics"><div class="rain-metric"><span>통합 비 위험도</span><strong>${integratedRisk}</strong></div><div class="rain-metric"><span>예상 강수량 <small>1시간 기준</small></span><strong>${amount}</strong></div></div>
+          <p class="forecast-source">기상청 강수확률 ${chance}${item.probabilitySource ? ' · 초단기 강수신호 반영' : issueAge ? ` · ${issueAge}` : ''}</p>
+          ${consensus ? `<div class="model-consensus"><span>${escapeHtml(consensus.votes)} · ${escapeHtml(consensus.range)}</span><strong>자료 통합값 ${escapeHtml(consensus.probability)}</strong></div>` : ''}
+          ${radarEvidence ? `<p class="model-check ${radarEvidence.klass}">${radarEvidence.text}</p>` : ''}
+        </article>`;
+      }).join('');
+      $$('.time-card').forEach((card) => {
+        const select = () => { state.mapHorizon = Number(card.dataset.minutes); renderTimeline(state.data.forecast); drawMap(); if (state.naverMap) drawNaverOverlays(); updateMapMode(); startRadarSequence(); };
+        card.onclick = select; card.onkeydown = (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); } };
+      });
+    }
+
+    function cctvStatus(camera) {
+      if (camera.rainNow === 'yes') return ['rain', camera.intensity === 'moderate' ? '비 · 중간' : '비 확인'];
+      if (camera.rainNow === 'no') return ['dry', '현재 건조'];
+      if (camera.rainNow === 'uncertain') return ['', '확인 필요'];
+      return ['', '분석 전'];
+    }
+    function renderCctv(cameras) {
+      $('#cctvCount').textContent = `${cameras.length} CAM`;
+      const shownCameras = cameras.slice(0, 8);
+      $('#cctvGrid').innerHTML = cameras.length ? shownCameras.map((camera) => {
+        const [klass, copy] = cctvStatus(camera);
+        return `<a class="cctv-card" href="${escapeHtml(camera.url || '#')}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(camera.name)} 영상 직접 보기" aria-label="${escapeHtml(camera.name)} CCTV 영상 새 창에서 열기">
+          <span class="cctv-state ${klass}"></span><span class="sector">${escapeHtml(camera.sector)} · ${camera.distance ? camera.distance + 'KM' : copy}</span>
+          <strong>${escapeHtml(camera.name)}</strong><p>${escapeHtml(camera.evidence || copy)}</p><span class="cctv-open">영상 직접 보기 ↗</span>
+        </a>`;
+      }).join('') : '<div class="cctv-empty">CCTV 고장이 아닙니다.<br>ITS 인증키가 비어 있어 CCTV 목록을 아직 요청하지 않았습니다.</div>';
+      const realStill = cameras.some((camera) => camera.url && (camera.cctvType === '3' || String(camera.format).toLowerCase().includes('jpg')));
+      const publicMode = state.runtime?.mode === 'public' || state.runtime?.aiEnabled === false;
+      $('#analyzeBtn').disabled = publicMode || !state.codex?.codex || !realStill || state.analyzing;
+      const blockers = [];
+      if (publicMode) blockers.push('공개 배포에서는 AI 분석 비활성화');
+      else if (!state.codex?.codex) blockers.push('로컬 Codex CLI 실행 경로 미연결');
+      if (!publicMode && !realStill) blockers.push('분석할 ITS 정지영상 없음');
+      $('#analyzeBtn').title = blockers.join(' · ');
+      $('#analysisHint').textContent = blockers.length ? `비활성화 이유: ${blockers.join(' · ')}` : '로컬 전용 · 15초 간격 이미지 2장으로 현재 비와 노면을 분석합니다.';
+      $('#analysisHint').classList.toggle('ready', !blockers.length);
+    }
+
+    function renderEvidence(data) {
+      const wet = data.cctvs.filter((camera) => camera.rainNow === 'yes').length;
+      const dry = data.cctvs.filter((camera) => camera.rainNow === 'no').length;
+      const uncertain = data.cctvs.filter((camera) => camera.rainNow === 'uncertain').length;
+      const analyzed = Boolean(data.cctv?.analyzedAt || wet || dry || uncertain);
+      const cctvEvidence = wet
+        ? [`${wet}곳에서 현재 비 신호`, 'DETECT', 'warn']
+        : analyzed
+          ? [`분석 완료 · 비 없음 ${dry} · 불확실 ${uncertain}`, uncertain ? 'REVIEW' : 'ANALYZED', uncertain ? 'warn' : 'good']
+        : data.cctv?.available
+          ? ['실제 정지영상 분석 전', 'PENDING', '']
+          : data.cctv?.configured
+            ? ['조회 가능한 CCTV 없음 · 판정 제외', 'NO DATA', 'warn']
+            : ['ITS 인증키 없음 · CCTV 목록 요청 안 함', 'OMITTED', ''];
+      const recent = data.recentConditions;
+      const recentCopy = recent
+        ? [`최근 3시간 ${recent.recentTotalMm}mm · ${recent.trend === 'easing' ? '약해지는 중' : recent.trend === 'increasing' ? '강해지는 중' : '변화 작음'}`, recent.recentTotalMm >= 1 ? 'WET' : 'DRY', recent.recentTotalMm >= 1 ? 'warn' : 'good']
+        : ['최근 실황 없음 · 노면 판단 제한', 'NO DATA', 'warn'];
+      const modelCount = Math.max(0, ...data.forecast.map((item) => item.multiModel?.availableModels || 0));
+      const aiEvidence = state.runtime?.mode === 'public' || state.runtime?.aiEnabled === false
+        ? ['공개 배포에서는 차단 · 로컬에서만 사용', 'LOCAL ONLY', '']
+        : state.codex?.codex
+          ? [`${state.codex.model} · ${state.codex.reasoning}`, 'READY', 'good']
+          : ['로컬 Codex CLI 확인 필요', 'OFF', 'warn'];
+      const rows = [
+        ['◫', '기상청 강수예보', data.demo ? '샘플 자료' : '목표시각에 가까운 단기·초단기 자료', data.demo ? 'SAMPLE' : 'LIVE', data.demo ? 'warn' : 'good'],
+        ['◎', '지도 강수영상', data.radar.configured ? `+1시간까지 MAPLE · +3시간부터 공식 블랜딩` : data.radar.etaMinutes ? `${data.radar.direction} · 약 ${data.radar.etaMinutes}분 뒤 접근` : '기상청 강수영상 연결 대기', data.radar.configured ? 'READY' : 'SETUP', data.radar.configured ? 'good' : 'warn'],
+        ['≋', '최근 강수·노면', ...recentCopy],
+        ['◇', '다중 예보모델', modelCount ? `ECMWF·GFS·JMA·ICON·KMA 중 ${modelCount}개 사용` : '다중모델 조회 실패 · 기상청만 사용', modelCount ? 'LIVE' : 'LIMITED', modelCount ? 'good' : 'warn'],
+        ['▣', 'CCTV 현장 확인', ...cctvEvidence],
+        ['✦', '노면 CCTV AI 분석', ...aiEvidence]
+      ];
+      $('#evidenceList').innerHTML = rows.map(([icon, title, copy, status, klass]) => `<div class="evidence-row"><div class="evidence-icon">${icon}</div><div><strong>${title}</strong><p>${copy}</p></div><span class="status-pill ${klass}">${status}</span></div>`).join('');
+    }
+
+    function renderAviation(aviation) {
+      const rows = [];
+      for (const item of aviation.metar || []) rows.push(`<div class="code-line"><b>METAR ${escapeHtml(item.id)} · ${escapeHtml(item.label || '')}</b>${item.role ? `<br><span>${escapeHtml(item.role)}</span>` : ''}<br>${escapeHtml(item.raw || '자료 없음')}</div>`);
+      for (const item of aviation.taf || []) rows.push(`<div class="code-line"><b>TAF ${escapeHtml(item.id)} · ${escapeHtml(item.label || '')}</b>${item.role ? `<br><span>${escapeHtml(item.role)}</span>` : ''}<br>${escapeHtml(item.raw || '자료 없음')}</div>`);
+      $('#aviationBody').innerHTML = rows.length ? rows.join('') : '<div class="code-line">현재 RKSM / RKSS / RKSI 자료가 없습니다.</div>';
+      $('#aviationStatus').textContent = `${(aviation.metar || []).length} METAR · ${(aviation.taf || []).length} TAF`;
+    }
+
+    function renderDecision(decision) {
+      const colors = { red: '#ff6f61', yellow: '#f8c34e', green: '#b6f542' };
+      $('.eyebrow').style.color = colors[decision.level] || '#b6f542';
+      $('.window-fill').style.background = decision.level === 'red' ? 'linear-gradient(90deg,#f8c34e,#ff6f61)' : decision.level === 'green' ? 'linear-gradient(90deg,#69d88f,#b6f542)' : 'linear-gradient(90deg,#b6f542,#f8c34e)';
+      $('#confidence').textContent = `판단 신뢰도 ${decision.confidence}%`;
+      $('#verdictRoute').textContent = ROUTES[state.route]?.name || '선택 코스';
+      $('#verdictTitle').textContent = decision.label;
+      $('#verdictReason').textContent = decision.reason;
+    }
+
+    function render() {
+      const data = state.data; if (!data) return;
+      renderDecision(data.decision); renderTimeline(data.forecast); renderCctv(data.cctvs); renderEvidence(data); renderAviation(data.aviation);
+      $('#updatedAt').textContent = `${formatTime(new Date(data.generatedAt))} 기준`;
+      $('#demoBanner').style.display = data.demo ? 'block' : 'none';
+      $('#mapDot').classList.toggle('demo', data.demo);
+      $('#radarBtn').textContent = data.radar.configured ? (state.radarOpen ? '레이더 끄기' : '레이더 켜기') : '기상청 레이더 ↗';
+      updateMapMode();
+      if (!data.radar.configured) state.radarOpen = false;
+      $('#radarConsole').classList.toggle('open', Boolean(data.radar.configured && state.radarOpen));
+      drawMap();
+      if (state.naverMap) drawNaverOverlays();
+      startRadarSequence();
+    }
+
+    async function refreshData() {
+      if (state.loading) return;
+      state.loading = true; $('#refreshBtn').disabled = true; $('#refreshBtn').innerHTML = '<span class="spin">↻</span> 확인 중';
+      try {
+        const response = await fetch('/api/snapshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ route: state.route }) });
+        const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '자료 요청 실패');
+        state.data = payload; render();
+        if (payload.errors?.length) toast(payload.errors[0]);
+      } catch (error) { toast(error.message); }
+      finally { state.loading = false; $('#refreshBtn').disabled = false; $('#refreshBtn').textContent = '지금 확인'; }
+    }
+
+    async function analyze() {
+      if (state.analyzing || !state.data) return;
+      if (state.runtime?.mode === 'public' || state.runtime?.aiEnabled === false) return toast('노면 CCTV AI 분석은 로컬 실행에서만 사용할 수 있습니다.');
+      state.analyzing = true; $('#analyzeBtn').disabled = true; $('#analyzeBtn').innerHTML = '<span class="spin">↻</span> 2개 프레임 수집 중';
+      toast('15초 간격 CCTV 프레임을 모아 현재 비와 노면을 분석합니다.');
+      try {
+        const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cctvs: state.data.cctvs, forecast: state.data.forecast }) });
+        const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '분석 실패');
+        const byId = new Map(payload.cameras.map((camera) => [camera.id, camera]));
+        state.data.cctvs = state.data.cctvs.map((camera) => byId.get(camera.id) || camera);
+        state.data.cctv.analyzedAt = payload.analyzedAt || new Date().toISOString();
+        state.data.decision = payload.decision; render(); toast(payload.summary || 'CCTV 분석을 마쳤습니다.');
+      } catch (error) { toast(error.message); }
+      finally { state.analyzing = false; $('#analyzeBtn').textContent = '노면 CCTV AI 분석'; renderCctv(state.data.cctvs); }
+    }
+
+    function openSettings() {
+      $('#settingsModal').classList.add('open');
+    }
+    function closeSettings() { $('#settingsModal').classList.remove('open'); }
+    function renderConnectionStatus() {
+      const rows = [
+        ['네이버 지도', state.configured.naver],
+        ['기상청 동네예보', state.configured.forecast],
+        ['기상청 강수영상', state.configured.radar],
+        ['ITS CCTV', state.configured.cctv]
+      ];
+      $('#connectionList').innerHTML = rows.map(([label, connected]) => `<div class="connection-row"><span>${label}</span><b class="${connected ? 'connected' : 'missing'}">${connected ? '연결됨' : '미연결'}</b></div>`).join('');
+    }
+
+    function project(lat, lon, width, height) {
+      const bounds = { minLon:126.66, maxLon:127.28, minLat:37.28, maxLat:37.75 };
+      return [(lon - bounds.minLon) / (bounds.maxLon - bounds.minLon) * width, (bounds.maxLat - lat) / (bounds.maxLat - bounds.minLat) * height];
+    }
+    function drawMap() {
+      const canvas = $('#fallbackMap'); if (state.naverMap) { canvas.style.display = 'none'; return; }
+      canvas.style.display = 'block'; const rect = canvas.getBoundingClientRect(); const dpr = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = rect.width * dpr; canvas.height = rect.height * dpr; const ctx = canvas.getContext('2d'); ctx.scale(dpr,dpr);
+      const w = rect.width, h = rect.height; ctx.clearRect(0,0,w,h);
+      const terrain = ctx.createLinearGradient(0,0,w,h); terrain.addColorStop(0,'#13241b'); terrain.addColorStop(.5,'#0b1c17'); terrain.addColorStop(1,'#19271a'); ctx.fillStyle=terrain; ctx.fillRect(0,0,w,h);
+      ctx.strokeStyle='rgba(174,202,135,.08)';ctx.lineWidth=1;
+      [[.17,.23,170,90],[.81,.18,220,112],[.72,.72,190,95],[.26,.76,250,120]].forEach(([cx,cy,rx,ry],group)=>{for(let ring=0;ring<5;ring++){ctx.beginPath();for(let a=0;a<=Math.PI*2+.08;a+=.08){const wobble=1+.045*Math.sin(a*3+group);const x=w*cx+Math.cos(a)*(rx-ring*19)*wobble;const y=h*cy+Math.sin(a)*(ry-ring*11)*wobble;(a?ctx.lineTo(x,y):ctx.moveTo(x,y));}ctx.stroke();}});
+      ctx.strokeStyle = 'rgba(190,230,214,.045)'; ctx.lineWidth = 1;
+      for (let x=0;x<w;x+=54){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+      for (let y=0;y<h;y+=54){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+      const river = [[37.585,126.72],[37.56,126.82],[37.545,126.92],[37.53,127.01],[37.525,127.09],[37.535,127.17],[37.56,127.26]].map(p=>project(p[0],p[1],w,h));
+      ctx.strokeStyle='rgba(58,138,151,.42)';ctx.lineWidth=30;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();river.forEach((p,i)=>i?ctx.lineTo(...p):ctx.moveTo(...p));ctx.stroke();
+      ctx.strokeStyle='rgba(105,216,143,.08)';ctx.lineWidth=3;
+      [[37.32,126.76,37.70,127.19],[37.39,126.69,37.59,127.27],[37.69,126.91,37.32,127.13],[37.43,126.68,37.61,127.25]].forEach(l=>{const a=project(l[0],l[1],w,h),b=project(l[2],l[3],w,h);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();});
+      // 남서쪽에서 접근하는 강수대: 샘플 모드에서도 공간적 의미가 보이도록 표현합니다.
+      const rainCenters = state.data?.demo ? [[37.31,126.84,74],[37.38,126.91,62],[37.44,126.97,48]] : [];
+      rainCenters.forEach(([lat,lon,r],i)=>{const [x,y]=project(lat,lon,w,h);const g=ctx.createRadialGradient(x,y,3,x,y,r);g.addColorStop(0,`rgba(80,180,194,${.25-i*.03})`);g.addColorStop(1,'rgba(80,180,194,0)');ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();});
+      ctx.font='600 11px Noto Sans KR';ctx.fillStyle='rgba(214,231,224,.42)';
+      [['서울',37.575,126.98],['판교',37.395,127.11],['수원',37.285,127.02],['하남',37.55,127.21]].forEach(([n,lat,lon])=>{const p=project(lat,lon,w,h);ctx.fillText(n,p[0]+8,p[1]-8);});
+      const route = ROUTES[state.route]; const [rx,ry]=project(route.lat,route.lon,w,h); ctx.fillStyle='#b6f542';ctx.beginPath();ctx.arc(rx,ry,10,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(182,245,66,.25)';ctx.lineWidth=8;ctx.beginPath();ctx.arc(rx,ry,20,0,Math.PI*2);ctx.stroke();
+      const selected = state.data?.forecast?.find(item => item.minutes === state.mapHorizon);
+      if (selected) { const rainy = selected.rain; ctx.fillStyle = rainy ? 'rgba(104,216,232,.15)' : 'rgba(105,216,143,.09)'; ctx.strokeStyle = rainy ? 'rgba(104,216,232,.72)' : 'rgba(105,216,143,.48)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(rx, ry, rainy ? 46 + selected.mm * 5 : 32, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+      ctx.fillStyle='#f1f7f4';ctx.font='800 12px Noto Sans KR';ctx.fillText(route.name,rx+17,ry+5);
+      for(const camera of state.data?.cctvs||[]){const [x,y]=project(camera.lat,camera.lon,w,h);ctx.fillStyle=camera.rainNow==='yes'?'#68d8e8':camera.rainNow==='no'?'#69d88f':'#70857d';ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=2;ctx.stroke();}
+      if(state.data?.radar?.direction){const [ax,ay]=project(37.40,126.86,w,h),[bx,by]=project(37.49,127.03,w,h);ctx.strokeStyle='#f8c34e';ctx.lineWidth=2;ctx.setLineDash([6,6]);ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(bx,by);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#f8c34e';ctx.font='500 10px DM Mono';ctx.fillText('RAIN ETA '+(state.data.radar.etaMinutes||'--')+'m',ax,ay-12);}
+    }
+
+    async function loadNaverMap(key) {
+      if (!key || window.naver?.maps) { if (window.naver?.maps && !state.naverMap) createNaverMap(); return; }
+      await new Promise((resolve, reject) => {
+        const setMapStage = (stage) => { document.documentElement.dataset.mapStage = stage; };
+        let completed = false;
+        const finishMapLoad = () => { if (completed || !window.naver?.maps) return; completed = true; window.runCastMapDebug.stage = 'sdk-ready'; setMapStage('sdk-ready'); createNaverMap(); resolve(); };
+        window.runCastMapDebug = { stage: 'sdk-requested', host: location.host };
+        setMapStage('sdk-requested');
+        window.initRunCastNaver = finishMapLoad;
+        window.navermap_authFailure = () => { window.runCastMapDebug.stage = 'auth-failure'; setMapStage('auth-failure'); toast('Naver 지도 인증에 실패했습니다. 등록 URL과 Client ID를 확인하세요.'); reject(new Error('Naver 인증 실패')); };
+        const script = document.createElement('script'); script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(key)}&callback=initRunCastNaver`;
+        script.onload = () => { if (window.naver?.maps) finishMapLoad(); else { window.runCastMapDebug.stage = 'sdk-loaded-without-maps'; setMapStage('sdk-loaded-without-maps'); } };
+        script.onerror = () => { window.runCastMapDebug.stage = 'sdk-network-error'; setMapStage('sdk-network-error'); toast('Naver 지도 SDK를 불러오지 못했습니다.'); reject(new Error('Naver SDK 로드 실패')); };
+        document.head.appendChild(script);
+      }).catch(()=>{});
+    }
+    function createNaverMap() {
+      if (state.naverMap || !window.naver?.maps) return;
+      document.documentElement.dataset.mapStage='map-creating';
+      try {
+        $('#naverMap').style.display='block';state.naverMap=new naver.maps.Map('naverMap',{center:new naver.maps.LatLng(37.50,127.04),zoom:10,mapTypeId:naver.maps.MapTypeId.NORMAL,mapTypeControl:true,zoomControl:true,zoomControlOptions:{position:naver.maps.Position.RIGHT_CENTER}});
+        document.documentElement.dataset.mapStage='map-ready';render();
+      } catch (error) {
+        document.documentElement.dataset.mapStage='map-error';console.error('Naver map creation failed',error);toast('Naver 지도를 생성하지 못했습니다.');
+      }
+    }
+    function clearNaverOverlays(){state.overlays.forEach(o=>o.setMap(null));state.overlays=[];}
+    function updateMapMode() {
+      if (!state.data) return;
+      const label = horizonLabel(state.mapHorizon);
+      $('#mapModeText').textContent = `${state.naverMap ? 'Naver 일반지도' : state.data.demo ? '지도 미리보기' : '실시간'} · ${label}`;
+    }
+    function radarMinutes() {
+      const step = state.mapHorizon >= 180 ? 10 : 5;
+      const start = Math.max(0, state.mapHorizon - step * 6);
+      return Array.from({ length: 7 }, (_, i) => start + i * step);
+    }
+    function radarUrl(minutes) { return `/api/radar?minutes=${minutes}&snapshot=${encodeURIComponent(state.data?.generatedAt || '')}`; }
+    async function transparentRadarFrame(minutes) {
+      const response=await fetch(radarUrl(minutes)); if(!response.ok) throw new Error(`레이더 ${minutes}분 프레임 ${response.status}`);
+      const bitmap=await createImageBitmap(await response.blob()); const raster=state.data?.radar?.raster||{sourceX:0,sourceY:20,width:700,height:700};
+      const canvas=document.createElement('canvas');canvas.width=raster.width;canvas.height=raster.height;const ctx=canvas.getContext('2d',{willReadFrequently:true});
+      ctx.drawImage(bitmap,raster.sourceX,raster.sourceY,raster.width,raster.height,0,0,raster.width,raster.height);const pixels=ctx.getImageData(0,0,canvas.width,canvas.height);
+      for(let i=0;i<pixels.data.length;i+=4){const r=pixels.data[i],g=pixels.data[i+1],b=pixels.data[i+2],spread=Math.max(r,g,b)-Math.min(r,g,b);if(spread<28||Math.max(r,g,b)<70)pixels.data[i+3]=0;else pixels.data[i+3]=Math.min(225,80+spread*2);}
+      ctx.putImageData(pixels,0,0);bitmap.close?.();return canvas;
+    }
+    function radarPixelToLatLng(px,py){
+      const p=state.data?.radar?.lcc||{lat1:30,lat2:60,lat0:0,lon0:126,xMin:-440000,yMin:3797382.7212162036,xMax:584000,yMax:4821382.721216239};
+      const raster=state.data?.radar?.raster||{width:700,height:700};const rad=Math.PI/180,a=6378137,e=Math.sqrt(0.0066943799901413165);
+      const m=phi=>Math.cos(phi)/Math.sqrt(1-e*e*Math.sin(phi)**2);const t=phi=>Math.tan(Math.PI/4-phi/2)/Math.pow((1-e*Math.sin(phi))/(1+e*Math.sin(phi)),e/2);
+      const phi1=p.lat1*rad,phi2=p.lat2*rad,phi0=p.lat0*rad;const n=(Math.log(m(phi1))-Math.log(m(phi2)))/(Math.log(t(phi1))-Math.log(t(phi2)));
+      const f=m(phi1)/(n*Math.pow(t(phi1),n)),rho0=a*f*Math.pow(t(phi0),n);const x=p.xMin+px/raster.width*(p.xMax-p.xMin),y=p.yMax-py/raster.height*(p.yMax-p.yMin);
+      const rho=Math.hypot(x,rho0-y),theta=Math.atan2(x,rho0-y),tt=Math.pow(rho/(a*f),1/n);let phi=Math.PI/2-2*Math.atan(tt);
+      for(let i=0;i<7;i++)phi=Math.PI/2-2*Math.atan(tt*Math.pow((1-e*Math.sin(phi))/(1+e*Math.sin(phi)),e/2));
+      return {lat:phi/rad,lon:p.lon0+theta/n/rad};
+    }
+    function latLngToRadarPixel(lat,lon){
+      const p=state.data?.radar?.lcc||{lat1:30,lat2:60,lat0:0,lon0:126,xMin:-440000,yMin:3797382.7212162036,xMax:584000,yMax:4821382.721216239};
+      const raster=state.data?.radar?.raster||{width:700,height:700};const rad=Math.PI/180,a=6378137,e=Math.sqrt(0.0066943799901413165);
+      const m=phi=>Math.cos(phi)/Math.sqrt(1-e*e*Math.sin(phi)**2);const t=phi=>Math.tan(Math.PI/4-phi/2)/Math.pow((1-e*Math.sin(phi))/(1+e*Math.sin(phi)),e/2);
+      const phi1=p.lat1*rad,phi2=p.lat2*rad,phi0=p.lat0*rad,phi=lat*rad;const n=(Math.log(m(phi1))-Math.log(m(phi2)))/(Math.log(t(phi1))-Math.log(t(phi2)));
+      const f=m(phi1)/(n*Math.pow(t(phi1),n)),rho0=a*f*Math.pow(t(phi0),n),rho=a*f*Math.pow(t(phi),n),theta=n*(lon-p.lon0)*rad;
+      const x=rho*Math.sin(theta),y=rho0-rho*Math.cos(theta);
+      return {x:(x-p.xMin)/(p.xMax-p.xMin)*raster.width,y:(p.yMax-y)/(p.yMax-p.yMin)*raster.height};
+    }
+    function radarSignalAround(surface,point,radius,minPixels){
+      const x0=Math.max(0,Math.floor(point.x-radius)),y0=Math.max(0,Math.floor(point.y-radius));
+      const x1=Math.min(surface.width,Math.ceil(point.x+radius+1)),y1=Math.min(surface.height,Math.ceil(point.y+radius+1));
+      if(x1<=x0||y1<=y0)return false;const pixels=surface.getContext('2d',{willReadFrequently:true}).getImageData(x0,y0,x1-x0,y1-y0).data;
+      let count=0;for(let y=0;y<y1-y0;y++)for(let x=0;x<x1-x0;x++){const dx=x+x0-point.x,dy=y+y0-point.y;if(dx*dx+dy*dy>radius*radius)continue;if(pixels[(y*(x1-x0)+x)*4+3]>32&&++count>=minPixels)return true;}
+      return false;
+    }
+    function applyRadarEvidence(frame){
+      const item=state.data?.forecast?.find(entry=>entry.minutes===state.mapHorizon);const route=ROUTES[state.route];if(!item||!route||!frame?.surface)return;
+      const point=latLngToRadarPixel(route.lat,route.lon),local=radarSignalAround(frame.surface,point,3,2),nearby=!local&&radarSignalAround(frame.surface,point,18,5);
+      item.radarChecked=true;item.radarProduct=state.mapHorizon>=180?'BLEND':'MAPLE';item.radarLocalSignal=local;item.radarNearbySignal=nearby;
+      item.radarConflict=(forecastSuggestsRain(item)!==local)&&!nearby;renderTimeline(state.data.forecast);drawNaverOverlays();
+    }
+    function drawRadarTriangle(ctx,image,s0,s1,s2,d0,d1,d2){
+      const den=s0.x*(s1.y-s2.y)+s1.x*(s2.y-s0.y)+s2.x*(s0.y-s1.y);if(!den)return;
+      const a=(d0.x*(s1.y-s2.y)+d1.x*(s2.y-s0.y)+d2.x*(s0.y-s1.y))/den,c=(d0.x*(s2.x-s1.x)+d1.x*(s0.x-s2.x)+d2.x*(s1.x-s0.x))/den,e=(d0.x*(s1.x*s2.y-s2.x*s1.y)+d1.x*(s2.x*s0.y-s0.x*s2.y)+d2.x*(s0.x*s1.y-s1.x*s0.y))/den;
+      const b=(d0.y*(s1.y-s2.y)+d1.y*(s2.y-s0.y)+d2.y*(s0.y-s1.y))/den,d=(d0.y*(s2.x-s1.x)+d1.y*(s0.x-s2.x)+d2.y*(s1.x-s0.x))/den,f=(d0.y*(s1.x*s2.y-s2.x*s1.y)+d1.y*(s2.x*s0.y-s0.x*s2.y)+d2.y*(s0.x*s1.y-s1.x*s0.y))/den;
+      ctx.save();ctx.beginPath();ctx.moveTo(d0.x,d0.y);ctx.lineTo(d1.x,d1.y);ctx.lineTo(d2.x,d2.y);ctx.closePath();ctx.clip();ctx.transform(a,b,c,d,e,f);ctx.drawImage(image,0,0);ctx.restore();
+    }
+    function createRadarCanvasOverlay(map){
+      const overlay=new naver.maps.OverlayView();overlay.surface=null;overlay.canvas=document.createElement('canvas');Object.assign(overlay.canvas.style,{position:'absolute',left:'0',top:'0',pointerEvents:'none',opacity:'.58',mixBlendMode:'normal'});
+      overlay.onAdd=function(){this.getPanes().overlayLayer.appendChild(this.canvas);};overlay.onRemove=function(){this.canvas.remove();};overlay.setFrame=function(surface){this.surface=surface;if(this.getMap())this.draw();};
+      overlay.draw=function(){
+        if(!this.surface)return;const mapNode=$('#naverMap'),width=mapNode.clientWidth,height=mapNode.clientHeight,dpr=Math.min(devicePixelRatio||1,2);if(!width||!height)return;
+        this.canvas.style.width=`${width}px`;this.canvas.style.height=`${height}px`;this.canvas.width=Math.round(width*dpr);this.canvas.height=Math.round(height*dpr);const ctx=this.canvas.getContext('2d');ctx.scale(dpr,dpr);const projection=this.getProjection(),step=25,size=700,nodes=[];
+        for(let y=0;y<=size;y+=step){const row=[];for(let x=0;x<=size;x+=step){const ll=radarPixelToLatLng(x,y);row.push(projection.fromCoordToOffset(new naver.maps.LatLng(ll.lat,ll.lon)));}nodes.push(row);}
+        for(let row=0;row<nodes.length-1;row++)for(let col=0;col<nodes[row].length-1;col++){const d00=nodes[row][col],d10=nodes[row][col+1],d01=nodes[row+1][col],d11=nodes[row+1][col+1];const minX=Math.min(d00.x,d10.x,d01.x,d11.x),maxX=Math.max(d00.x,d10.x,d01.x,d11.x),minY=Math.min(d00.y,d10.y,d01.y,d11.y),maxY=Math.max(d00.y,d10.y,d01.y,d11.y);if(maxX<0||minX>width||maxY<0||minY>height)continue;const x=col*step,y=row*step,s00={x,y},s10={x:x+step,y},s01={x,y:y+step},s11={x:x+step,y:y+step};drawRadarTriangle(ctx,this.surface,s00,s10,s11,d00,d10,d11);drawRadarTriangle(ctx,this.surface,s00,s11,s01,d00,d11,d01);}
+      };
+      overlay.setMap(map);return overlay;
+    }
+    function showRadarFrame(index){
+      if(!state.radarFrames.length)return;state.radarFrameIndex=index%state.radarFrames.length;const frame=state.radarFrames[state.radarFrameIndex];
+      $('#radarFrameLabel').textContent=`T+${String(frame.minutes).padStart(2,'0')}m`;$$('.radar-frame').forEach((dot,i)=>dot.classList.toggle('active',i===state.radarFrameIndex));
+      if(!frame.surface)return;$('#radarState').textContent=state.radarPlaying?'PLAY':'PAUSE';
+      if(state.naverMap){if(!state.radarOverlay)state.radarOverlay=createRadarCanvasOverlay(state.naverMap);else if(!state.radarOverlay.getMap())state.radarOverlay.setMap(state.naverMap);state.radarOverlay.setFrame(frame.surface);}
+      else{const img=$('#radarFallbackOverlay');img.src=frame.surface.toDataURL('image/png');img.style.display=state.radarOpen?'block':'none';}
+    }
+    function syncRadarTimer(){clearInterval(state.radarTimer);state.radarTimer=null;$('#radarPlay').textContent=state.radarPlaying?'Ⅱ':'▶';if(state.radarPlaying&&state.radarOpen&&state.radarFrames.length)state.radarTimer=setInterval(()=>showRadarFrame((state.radarFrameIndex+1)%state.radarFrames.length),1100);}
+    async function startRadarSequence(){
+      clearInterval(state.radarTimer);state.radarTimer=null;const configured=Boolean(state.data?.radar?.configured);$('#radarConsole').classList.toggle('open',configured&&state.radarOpen);
+      if(!configured||!state.radarOpen){state.radarOverlay?.setMap(null);$('#radarFallbackOverlay').style.display='none';return;}
+      const blended = state.mapHorizon >= 180;
+      $('#radarProduct').textContent = blended ? 'MAPLE · KLAPS 공식 블랜딩' : 'MAPLE 강수대 이동 예측';
+      $('#radarCadence').textContent = blended ? '기상청 블랜딩 · 10분 간격' : '기상청 MAPLE · 5분 간격';
+      const token=++state.radarLoadToken;state.radarFrames=radarMinutes().map(minutes=>({minutes,surface:null}));state.radarFrameIndex=0;$('#radarState').textContent='LOADING';
+      $('#radarFrames').innerHTML=state.radarFrames.map((_,i)=>`<button class="radar-frame" data-frame="${i}" aria-label="레이더 프레임 ${i+1}"></button>`).join('');
+      $$('.radar-frame').forEach(dot=>dot.onclick=()=>{showRadarFrame(Number(dot.dataset.frame));syncRadarTimer();});
+      await Promise.all(state.radarFrames.map(async(frame,index)=>{try{frame.surface=await transparentRadarFrame(frame.minutes);if(token!==state.radarLoadToken)return;$$('.radar-frame')[index]?.classList.add('loaded');if(index===0)showRadarFrame(0);}catch(error){if(token===state.radarLoadToken){$('#radarState').textContent='ERROR';console.warn(error);}}}));
+      if(token!==state.radarLoadToken)return;if(state.radarFrames.some(frame=>frame.surface)){const finalFrame=state.radarFrames[state.radarFrames.length-1];if(finalFrame?.surface)applyRadarEvidence(finalFrame);$('#radarState').textContent='READY';showRadarFrame(0);syncRadarTimer();}
+    }
+    function toggleRadar() {
+      if (!state.data?.radar?.configured) { window.open(state.data?.radar?.officialUrl || 'https://www.weather.go.kr/w/weather/radar/radar.do','_blank','noopener'); return; }
+      state.radarOpen=!state.radarOpen;$('#radarBtn').textContent=state.radarOpen?'레이더 끄기':'레이더 켜기';startRadarSequence();
+    }
+    function toggleRadarPlayback(){state.radarPlaying=!state.radarPlaying;showRadarFrame(state.radarFrameIndex);syncRadarTimer();}
+    function drawNaverOverlays(){
+      if(!state.naverMap||!state.data)return;clearNaverOverlays();const route=ROUTES[state.route];state.naverMap.panTo(new naver.maps.LatLng(route.lat,route.lon));
+      const marker=new naver.maps.Marker({map:state.naverMap,position:new naver.maps.LatLng(route.lat,route.lon),icon:{content:`<div class="naver-marker route">RUN</div>`,anchor:new naver.maps.Point(22,15)}});state.overlays.push(marker);
+      const selected=state.data.forecast.find(item=>item.minutes===state.mapHorizon);if(selected){const expectsRain=forecastSuggestsRain(selected),signalColor=selected.radarConflict?'#f8c34e':expectsRain?'#68d8e8':'#69d88f';const forecastCircle=new naver.maps.Circle({map:state.naverMap,center:new naver.maps.LatLng(route.lat,route.lon),radius:expectsRain?3000+selected.mm*450:1800,fillColor:signalColor,fillOpacity:expectsRain ? .16 : .07,strokeColor:signalColor,strokeOpacity:.55,strokeWeight:2});state.overlays.push(forecastCircle);}
+      for(const c of state.data.cctvs){const klass=c.rainNow==='yes'?'rain':c.rainNow==='no'?'dry':'';const m=new naver.maps.Marker({map:state.naverMap,position:new naver.maps.LatLng(c.lat,c.lon),title:c.name,icon:{content:`<div class="naver-marker ${klass}">${escapeHtml(c.sector)}</div>`,anchor:new naver.maps.Point(18,15)}});state.overlays.push(m);}
+      if(state.data.demo){[[37.39,126.91,11000],[37.44,126.97,8000]].forEach(([lat,lon,radius])=>{const circle=new naver.maps.Circle({map:state.naverMap,center:new naver.maps.LatLng(lat,lon),radius,fillColor:'#49aebe',fillOpacity:.16,strokeColor:'#68d8e8',strokeOpacity:.25,strokeWeight:1});state.overlays.push(circle);});}
+    }
+
+    async function boot() {
+      tickClock(); setInterval(tickClock,1000); window.addEventListener('resize',drawMap);
+      $('#settingsBtn').onclick=openSettings; $('#closeSettings').onclick=closeSettings; $('#settingsModal').onclick=(e)=>{if(e.target.id==='settingsModal')closeSettings();};
+      $('#refreshBtn').onclick=refreshData; $('#analyzeBtn').onclick=analyze; $('#radarBtn').onclick=toggleRadar; $('#radarPlay').onclick=toggleRadarPlayback;
+      $$('.route-chip').forEach(btn=>btn.onclick=async()=>{state.route=btn.dataset.route;$$('.route-chip').forEach(b=>b.classList.toggle('active',b===btn));await refreshData();});
+      try {
+        const config = await fetch('/api/config').then(response => response.json());
+        state.runtime = { ...state.runtime, ...(config.runtime || {}) };
+        state.keys = { naverKey: config.keys?.naverKey || '' };
+        state.configured = config.configured || {};
+        renderConnectionStatus();
+        if (state.runtime.mode === 'public') $('#settingsIntro').textContent = '공개 배포 모드입니다. 비밀 키와 AI 기능은 서버 안에서만 관리됩니다.';
+      } catch { renderConnectionStatus(); }
+      try {
+        state.codex = await fetch('/api/status').then(r=>r.json());
+        if (state.codex.runtimeMode) state.runtime = { ...state.runtime, mode: state.codex.runtimeMode, aiEnabled: state.codex.aiEnabled };
+      } catch { state.codex={codex:false}; }
+      if(state.keys.naverKey) await loadNaverMap(state.keys.naverKey); await refreshData();
+    }
+    boot();
+  </script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "regions": ["icn1"],
+  "functions": {
+    "api/**/*.mjs": {
+      "maxDuration": 30
+    }
+  }
+}
