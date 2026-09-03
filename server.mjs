@@ -1259,15 +1259,16 @@ async function getStatus() {
 async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
-    "index.html", "mobile.html", "assets/mobile.js", "assets/mobile.css",
-    "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/og-image.png",
+    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css",
+    "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/pwa-icon-192.png",
+    "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png",
   ]);
   if (!publicFiles.has(relative)) return sendJson(res, 404, { error: "Not found" });
   const filePath = resolve(ROOT, relative);
   if (!filePath.startsWith(ROOT)) return sendJson(res, 404, { error: "Not found" });
   try {
     const data = await readFile(filePath);
-    const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml" };
+    const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml" };
     res.writeHead(200, { "Content-Type": types[extname(filePath)] || "application/octet-stream", "Cache-Control": "no-cache" });
     res.end(data);
   } catch {

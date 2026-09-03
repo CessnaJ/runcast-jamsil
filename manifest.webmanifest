@@ -1,0 +1,32 @@
+{
+  "id": "/mobile.html",
+  "name": "RunCast 잠실 — 러닝 날씨 확인",
+  "short_name": "RunCast 잠실",
+  "description": "지금, 오전 6시, 오후 8시의 잠실 1시간 러닝 날씨를 확인합니다.",
+  "start_url": "/mobile.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#07100e",
+  "theme_color": "#07100e",
+  "icons": [
+    {
+      "src": "/assets/pwa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/pwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/pwa-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
