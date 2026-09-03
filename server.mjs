@@ -1260,8 +1260,14 @@ async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
     "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css",
-    "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/pwa-icon-192.png",
+    "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/apple-touch-icon-v2.png", "assets/pwa-icon-192.png",
     "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png",
+    "assets/apple-startup-1320x2868.png", "assets/apple-startup-1206x2622.png",
+    "assets/apple-startup-1290x2796.png", "assets/apple-startup-1179x2556.png",
+    "assets/apple-startup-1284x2778.png", "assets/apple-startup-1170x2532.png",
+    "assets/apple-startup-1125x2436.png", "assets/apple-startup-1242x2688.png",
+    "assets/apple-startup-828x1792.png", "assets/apple-startup-750x1334.png",
+    "assets/apple-startup-640x1136.png",
   ]);
   if (!publicFiles.has(relative)) return sendJson(res, 404, { error: "Not found" });
   const filePath = resolve(ROOT, relative);
