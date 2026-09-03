@@ -728,6 +728,7 @@ function assessRunForecast(item, recentConditions) {
   const moderateRain = windowPeak >= 3 && windowPeak < 5;
   const uncomfortableRain = windowPeak >= 5;
   const lowToModerateChance = !Number.isFinite(combinedRisk) || combinedRisk <= 70;
+  const officialChance = Number.isFinite(item.probability) ? `기상청 강수확률 ${item.probability}%` : "여러 예보 종합";
 
   let level, label, reason;
   if (recoveringSurface) {
@@ -735,19 +736,19 @@ function assessRunForecast(item, recentConditions) {
     reason = `직전 시간 강수가 최대 ${previousAmount.toFixed(1)}mm로 예상되어 미끄러운 구간과 물웅덩이가 남을 수 있습니다.`;
   } else if (drizzle && lowToModerateChance && !wetSurface) {
     level = "go"; label = (expectedAmount || 0) >= 0.2 ? "이슬비 감수 시 1시간 러닝 가능" : "1시간 러닝 무난";
-    reason = `${Number.isFinite(combinedRisk) ? `1시간 통합 위험도 ${combinedRisk}%` : "강수 가능성 낮음"} · 시간당 강수량은 ${expectedAmount && expectedAmount > 0 ? `${expectedAmount.toFixed(1)}mm 안팎` : "거의 없는 수준"}으로 예상됩니다.`;
+    reason = `${officialChance} · 시간당 강수량은 ${expectedAmount && expectedAmount > 0 ? `${expectedAmount.toFixed(1)}mm 안팎` : "거의 없는 수준"}으로 예상됩니다.`;
   } else if (drizzle && lowToModerateChance && wetSurface) {
     level = "caution"; label = "비는 약하지만 노면 주의";
     reason = "강수량은 적어도 직전 비로 노면이 젖어 있을 가능성이 있어 짧은 코스가 낫습니다.";
   } else if (uncomfortableRain || (moderateRain && ((combinedRisk || 0) >= 50 || wetSurface))) {
     level = "avoid"; label = "강수 가능성 높음 · 미루기";
-    reason = `통합 위험도 ${combinedRisk ?? "--"}% · 러닝 시간대 강수량이 최대 ${windowPeak.toFixed(1)}mm/h로 예상됩니다. 3mm/h부터는 이슬비보다 확실히 젖는 비에 가깝습니다.`;
+    reason = `${officialChance} · 러닝 시간대 강수량이 최대 ${windowPeak.toFixed(1)}mm/h로 예상됩니다. 3mm/h부터는 이슬비보다 확실히 젖는 비에 가깝습니다.`;
   } else if (noticeableRain || moderateRain) {
     level = "caution"; label = moderateRain ? "젖는 비 가능 · 짧은 코스 권장" : "젖어도 괜찮다면 러닝 가능";
     reason = `러닝 시간대 강수량이 최대 ${windowPeak.toFixed(1)}mm/h로 예상됩니다. ${moderateRain ? "3mm/h 이상이면 옷과 신발이 눈에 띄게 젖을 수 있습니다." : "1mm/h를 넘으면 이슬비보다 체감되는 약한 비에 가깝습니다."}`;
   } else if ((combinedRisk || 0) >= 70) {
     level = "caution"; label = "강수 확률 높음 · 출발 전 재확인";
-    reason = `통합 위험도 ${combinedRisk ?? "--"}%지만 예상 강수량은 1mm/h 안팎입니다. 강수 영상과 노면 상태를 출발 직전에 다시 확인하세요.`;
+    reason = `${officialChance}은 높지만 예상 강수량은 1mm/h 안팎입니다. 강수 영상과 노면 상태를 출발 직전에 다시 확인하세요.`;
   } else {
     level = "caution"; label = disagreement ? "모델 전망 엇갈림 · 출발 전 재확인" : "짧은 코스로 준비";
     reason = disagreement ? "예보모델 간 강수 위치나 확률 차이가 커서 단일 숫자보다 출발 직전 갱신이 중요합니다." : "약한 비 이상의 가능성이 있어 우회 가능한 짧은 코스가 안전합니다.";
@@ -911,6 +912,7 @@ export function makeDecision(forecast, cctvs = []) {
  */
 export function summarizeRunWindow(samples = []) {
   const amounts = samples.map((item) => item?.runAssessment?.expectedAmount).map(Number).filter(Number.isFinite);
+  const officialProbabilities = samples.map((item) => item?.probability).map(Number).filter(Number.isFinite);
   // 통합 위험도가 공식 POP보다 낮더라도 사용자에게 더 낮은 확률로 보이지 않게 둘 다 반영합니다.
   const risks = samples.flatMap((item) => [item?.runAssessment?.combinedRisk, item?.probability]).map(Number).filter(Number.isFinite);
   const surfaces = samples.map((item) => item?.runAssessment?.surface || "dry");
@@ -925,7 +927,8 @@ export function summarizeRunWindow(samples = []) {
   const surface = surfaces.includes("recovering") ? "recovering" : surfaces.includes("wet") ? "wet" : "dry";
   const levels = samples.map((item) => item?.runAssessment?.level);
   const worstLevel = levels.includes("avoid") ? "avoid" : levels.includes("caution") ? "caution" : "go";
-  return { estimatedAmount, peakAmount, probabilityMax, probabilityAverage, surface, worstLevel, sampleCount: samples.length };
+  const officialProbabilityMax = officialProbabilities.length ? roundToFive(Math.max(...officialProbabilities)) : null;
+  return { estimatedAmount, peakAmount, probabilityMax, probabilityAverage, officialProbabilityMax, surface, worstLevel, sampleCount: samples.length };
 }
 
 function makeRunModes(plans, forecast, now = new Date()) {

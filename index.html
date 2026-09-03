@@ -297,7 +297,7 @@
         <section class="panel">
           <div class="panel-title"><h3>강수 타임라인</h3><span class="source-time" id="updatedAt">--:-- 기준</span></div>
           <div class="timeline" id="timeline"></div>
-          <div class="timeline-explainer"><strong>지도 강수 영상은 이렇게 읽어요</strong><p><b>MAPLE</b> · +30분·+1시간은 현재 강수대의 이동을 우선 봅니다.</p><p><b>기상청 블랜딩</b> · +3·+6·+9시간은 MAPLE과 KLAPS를 결합한 공식 예측장을 사용합니다.</p><p><b>종합 위험도</b> · 기상청 확률과 ECMWF·GFS·ICON 확률의 단순 평균이며 학습된 확률은 아닙니다.</p></div>
+          <div class="timeline-explainer"><strong>지도 강수 영상은 이렇게 읽어요</strong><p><b>MAPLE</b> · +30분·+1시간은 현재 강수대의 이동을 우선 봅니다.</p><p><b>기상청 블랜딩</b> · +3·+6·+9시간은 MAPLE과 KLAPS를 결합한 공식 예측장을 사용합니다.</p><p><b>러닝 판단</b> · 화면에는 기상청 강수확률을 표시합니다. KMA·ECMWF·GFS·JMA·ICON 예보의 일치 여부도 내부 판단에 함께 반영합니다.</p></div>
         </section>
 
         <section class="panel">
@@ -448,7 +448,6 @@
         const value = (number, suffix = '') => Number.isFinite(number) ? `${number}${suffix}` : '--';
         const probability = levelChance(item);
         const chance = Number.isFinite(probability) ? `${probability}%` : '--';
-        const integratedRisk = Number.isFinite(item.runAssessment?.combinedRisk) ? `${item.runAssessment.combinedRisk}%` : chance;
         const amount = item.unavailable ? '--' : escapeHtml(item.probabilityAmountText || item.amountText || (item.mm > 0 ? `${item.mm} mm` : '0 mm'));
         const validTime = item.sourceTime ? `${formatTime(new Date(item.sourceTime))} 유효` : '유효시각 없음';
         const issueAge = ageLabel(item.issueAgeMinutes);
@@ -458,9 +457,9 @@
         return `<article class="time-card ${item.minutes <= 60 ? 'run-focus' : ''} ${item.minutes === state.mapHorizon ? 'active' : ''} ${item.radarConflict && advice?.level !== 'go' ? 'conflict' : ''}" data-minutes="${item.minutes}" tabindex="0" role="button" aria-label="${horizonLabel(item.minutes)} 지도에 표시">
           <div class="time-card-top"><div class="time-label"><strong>${horizonLabel(item.minutes)}</strong><span>${formatTime(when)}</span></div><div class="wx-summary"><strong>${copy}</strong><span>${validTime}</span></div><div class="weather-now"><strong>${value(item.temperature, '°')}</strong><span>습도 ${value(item.humidity, '%')} · 바람 ${value(item.windSpeed, 'm/s')}</span></div></div>
           ${advice ? `<div class="run-advice ${escapeHtml(advice.level)}"><strong>${escapeHtml(advice.label)}</strong><span>${escapeHtml(advice.reason)}</span></div>` : ''}
-          <div class="rain-metrics"><div class="rain-metric"><span>통합 비 위험도</span><strong>${integratedRisk}</strong></div><div class="rain-metric"><span>예상 강수량 <small>1시간 기준</small></span><strong>${amount}</strong></div></div>
-          <p class="forecast-source">기상청 강수확률 ${chance}${item.probabilitySource ? ' · 초단기 강수신호 반영' : issueAge ? ` · ${issueAge}` : ''}</p>
-          ${consensus ? `<div class="model-consensus"><span>${escapeHtml(consensus.votes)} · ${escapeHtml(consensus.range)}</span><strong>자료 통합값 ${escapeHtml(consensus.probability)}</strong></div>` : ''}
+          <div class="rain-metrics"><div class="rain-metric"><span>기상청 강수확률</span><strong>${chance}</strong></div><div class="rain-metric"><span>예상 강수량 <small>1시간 기준</small></span><strong>${amount}</strong></div></div>
+          <p class="forecast-source">${item.probabilitySource ? '기상청 단기예보 · 초단기 강수신호 반영' : issueAge ? `기상청 예보 · ${issueAge}` : '기상청 예보'}</p>
+          ${consensus ? `<div class="model-consensus"><span>${escapeHtml(consensus.votes)} · ${escapeHtml(consensus.range)}</span><strong>다른 예보 비교</strong></div>` : ''}
           ${radarEvidence ? `<p class="model-check ${radarEvidence.klass}">${radarEvidence.text}</p>` : ''}
         </article>`;
       }).join('');

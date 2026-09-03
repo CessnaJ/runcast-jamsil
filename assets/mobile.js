@@ -79,7 +79,7 @@ function rainFeelCopy(item) {
 }
 
 function probabilityCopy(item) {
-  const probability = Number.isFinite(item?.probability) ? item.probability : item?.runAssessment?.combinedRisk;
+  const probability = item?.probability;
   if (!Number.isFinite(probability)) return "확률 자료 없음";
   const level = probability <= 30 ? "낮음" : probability < 60 ? "보통" : "있음";
   return `${level} · ${probability}%`;
@@ -95,7 +95,7 @@ function adviceTitle(item) {
 }
 
 function modeProbabilityCopy(mode) {
-  const probability = mode?.summary?.probabilityMax;
+  const probability = mode?.summary?.officialProbabilityMax;
   if (!Number.isFinite(probability)) return "확률 자료 없음";
   const level = probability <= 30 ? "낮음" : probability < 60 ? "보통" : "있음";
   return `${level} · ${probability}%`;
@@ -204,7 +204,7 @@ function renderDecision() {
   const surfaceCopy = surface.observed ? `${surface.short} · 관측` : surface.short;
   const rainProbability = mode ? modeProbabilityCopy(mode) : probabilityCopy(first);
   const rainAmount = mode ? modeAmountCopy(mode) : rainAmountCopy(first);
-  $("#decisionReason").innerHTML = `<span>• 1시간 안 비 올 가능성 ${escapeHtml(rainProbability)}</span><span>• 1시간 예상 강수량 ${escapeHtml(rainAmount)}</span><span>• 노면 · ${escapeHtml(surfaceCopy)}</span>`;
+  $("#decisionReason").innerHTML = `<span>• 러닝 중 비 올 확률 ${escapeHtml(rainProbability)}</span><span>• 1시간 예상 강수량 ${escapeHtml(rainAmount)}</span><span>• 노면 · ${escapeHtml(surfaceCopy)}</span>`;
   const mapCta = $("#runMapCta");
   if (mode?.withinMapHorizon) {
     mapCta.hidden = false;
@@ -266,7 +266,7 @@ function evidenceRows() {
   const surface = surfaceInfo(mode?.summary ? { surface: mode.summary.surface } : first?.runAssessment, recent, mode?.immediate ? cameras : []);
   const quality = dataQuality(data, first);
   return [
-    { icon: "☂", title: "기상청 예보", copy: mode ? `1시간 안 비 올 가능성 ${modeProbabilityCopy(mode)} · 1시간 예상 ${modeAmountCopy(mode)}` : `비 올 가능성 ${probabilityCopy(first)} · 예상 ${rainAmountCopy(first)}`, status: "확인", warn: mode?.decision?.level === "red" || first?.runAssessment?.level === "avoid" },
+    { icon: "☂", title: "기상청 예보", copy: mode ? `강수확률 ${modeProbabilityCopy(mode)} · 1시간 예상 ${modeAmountCopy(mode)}` : `강수확률 ${probabilityCopy(first)} · 예상 ${rainAmountCopy(first)}`, status: "확인", warn: mode?.decision?.level === "red" || first?.runAssessment?.level === "avoid" },
     { icon: "≋", title: "최근 비와 노면", copy: recent ? `최근 3시간 ${recent.recentTotalMm}mm · ${surface.detail}` : "최근 강수 자료를 확인하지 못했어요", status: surface.observed ? "관측" : "추정", warn: !recent || first?.runAssessment?.surface !== "dry" },
     { icon: "◇", title: "다른 예보", copy: models ? `${models.availableModels || 0}개 예보 중 ${models.wetVotes || 0}개가 비를 예상해요 · ${quality.detail}` : "다른 예보 자료를 확인하지 못했어요", status: quality.label.replace("자료 일치도 ", ""), warn: quality.label.endsWith("낮음") },
     { icon: "◎", title: "비구름 영상", copy: data.radar?.configured ? "지도에서 비구름의 예상 이동을 직접 볼 수 있어요" : "강수 영상은 현재 연결되지 않았어요", status: data.radar?.configured ? "확인 가능" : "제외", warn: !data.radar?.configured },
