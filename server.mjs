@@ -1,4 +1,5 @@
 import http from "node:http";
+import https from "node:https";
 import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -103,6 +104,58 @@ async function fetchJson(url, options = {}) {
   });
   if (!response.ok) throw new Error(`외부 자료 요청 실패 (${response.status})`);
   return response.json();
+}
+
+/** ITS의 비표준 HTTPS 9443 포트를 Node 소켓으로 직접 호출합니다. */
+function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2_000_000 } = {}) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+    const resolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise(value);
+    };
+    const reject = (error) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    };
+
+    const request = https.get(url, { headers, family: 4 }, (response) => {
+      const chunks = [];
+      let size = 0;
+
+      response.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > maxBytes) {
+          const error = new Error("ITS CCTV 응답이 너무 큽니다.");
+          error.code = "ITS_RESPONSE_TOO_LARGE";
+          request.destroy(error);
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("aborted", () => reject(new Error("ITS CCTV 응답이 중단되었습니다.")));
+      response.on("error", reject);
+      response.on("end", () => {
+        const status = response.statusCode || 0;
+        if (status < 200 || status >= 300) {
+          const error = new Error(`ITS CCTV 요청 실패 (${status || "응답 없음"})`);
+          error.statusCode = status || 502;
+          reject(error);
+          return;
+        }
+        resolve(Buffer.concat(chunks).toString("utf8"));
+      });
+    });
+
+    request.setTimeout(timeout, () => {
+      const error = new Error("ITS CCTV 서버 연결 시간 초과");
+      error.code = "ITS_CONNECT_TIMEOUT";
+      request.destroy(error);
+    });
+    request.on("error", reject);
+  });
 }
 
 function canonicalPart(value) {
@@ -757,14 +810,10 @@ async function getItsCctv(apiKey, target, cacheTrace = []) {
   const location = `bbox${(target.lon - .55).toFixed(3)},${(target.lat - .42).toFixed(3)},${(target.lon + .55).toFixed(3)},${(target.lat + .42).toFixed(3)}`;
   const text = await cachedRawLoad(buildRawCacheKey({
     provider: "its", dataset: "cctv-info", location, cycle: "live", variant: "type-all-cctv3-jsonxml",
-  }), async () => {
-    const response = await fetch(`https://openapi.its.go.kr:9443/cctvInfo?${params}`, {
-      signal: timeoutSignal(20_000),
-      headers: { "User-Agent": "RunCast-Jamsil/0.1 local-dashboard", Accept: "application/json, application/xml" },
-    });
-    if (!response.ok) throw new Error(`ITS CCTV 요청 실패 (${response.status})`);
-    return response.text();
-  }, { trace: cacheTrace, freshMs: 25_000, staleMs: 45_000, failureMs: 20_000 });
+  }), () => httpsGetText(`https://openapi.its.go.kr:9443/cctvInfo?${params}`, {
+    timeout: 12_000,
+    headers: { "User-Agent": "RunCast-Jamsil/0.1 local-dashboard", Accept: "application/json, application/xml" },
+  }), { trace: cacheTrace, freshMs: 25_000, staleMs: 45_000, failureMs: 20_000 });
   let raw = [];
   try {
     const json = JSON.parse(text);
