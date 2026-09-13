@@ -1,17 +1,15 @@
-const ROUTES = {
-  seokchon: { name: "석촌호수", lat: 37.5082, lon: 127.1001 },
-  olympic: { name: "올림픽공원", lat: 37.5207, lon: 127.1215 },
-  hanriver: { name: "잠실 한강", lat: 37.5197, lon: 127.0857 },
-};
+import { ROUTES, locationKey } from './weather-domain.mjs';
+import { createExtras, storage, preferences, readForecastCache, writeForecastCache } from './mobile-extra.js';
+
 
 // 이전 버전이 브라우저에 저장했던 비밀 키를 더 이상 사용하지 않고 제거합니다.
-localStorage.removeItem("runcast.keys");
+try { localStorage.removeItem("runcast.keys"); } catch {}
 
 const state = {
-  view: "decision", route: "seokchon", mapHorizon: 0, departureMode: "now", data: null,
+  view: "decision", route: preferences.location.id, location: preferences.location, mapHorizon: 0, departureMode: "now", data: null,
   keys: {}, configured: {},
   runtime: { mode: "local", aiEnabled: true, aiLocalOnly: true }, codex: null,
-  loading: false, analyzing: false, naverMap: null, naverSdkPromise: null,
+  loading: true, analyzing: false, naverMap: null, naverSdkPromise: null,
   overlays: [], radarOverlay: null, radarFrames: [], radarFrameIndex: 0,
   radarPlaying: true, radarTimer: null, radarLoadToken: 0,
   refreshController: null, refreshToken: 0, usingCachedData: false, contextLoading: false,
@@ -52,10 +50,6 @@ function modePoint(mode, phase) {
   return mode?.samples?.find((sample) => sample.phase === phase) || null;
 }
 
-function amountText(item) {
-  return item?.probabilityAmountText || item?.amountText || (item?.mm > 0 ? `${item.mm}mm` : "0mm");
-}
-
 function expectedMm(item) {
   const value = item?.runAssessment?.expectedAmount;
   if (Number.isFinite(value)) return value;
@@ -65,17 +59,10 @@ function expectedMm(item) {
 
 function rainAmountCopy(item) {
   const mm = expectedMm(item);
-  if (!Number.isFinite(mm) || mm <= .05) return "거의 0mm";
+  if (!Number.isFinite(mm)) return "자료 없음";
+  if (mm <= .05) return "거의 0mm";
   if (mm < 1) return `${mm.toFixed(1)}mm 안팎`;
   return `${mm.toFixed(mm % 1 ? 1 : 0)}mm 안팎`;
-}
-
-function rainFeelCopy(item) {
-  const mm = expectedMm(item) || 0;
-  if (mm <= .2) return "거의 안 젖는 수준";
-  if (mm < 1) return "옷이 살짝 젖을 수 있음";
-  if (mm < 3) return "오래 뛰면 옷과 신발이 젖음";
-  return "옷과 신발이 확실히 젖음";
 }
 
 function probabilityCopy(item) {
@@ -83,15 +70,6 @@ function probabilityCopy(item) {
   if (!Number.isFinite(probability)) return "확률 자료 없음";
   const level = probability <= 30 ? "낮음" : probability < 60 ? "보통" : "있음";
   return `${level} · ${probability}%`;
-}
-
-function adviceTitle(item) {
-  const advice = item?.runAssessment;
-  if (advice?.surface === "recovering") return "노면이 젖어 있을 수 있어요";
-  if (advice?.level === "go") return (advice.expectedAmount || 0) >= .2 ? "이슬비 감수 시 가능" : "러닝하기 좋은 편";
-  if (advice?.level === "caution") return advice.windowPeak >= 3 ? "1시간 러닝은 비추천" : "젖어도 괜찮다면 가능";
-  if (advice?.level === "avoid") return "1시간 러닝 비추천";
-  return item?.unavailable ? "자료를 확인할 수 없어요" : "출발 직전 다시 확인";
 }
 
 function modeProbabilityCopy(mode) {
@@ -103,28 +81,21 @@ function modeProbabilityCopy(mode) {
 
 function modeAmountCopy(mode) {
   const mm = mode?.summary?.estimatedAmount;
-  if (!Number.isFinite(mm) || mm <= .05) return "거의 0mm";
+  if (!Number.isFinite(mm)) return "자료 없음";
+  if (mm <= .05) return "거의 0mm";
   if (mm < 1) return `${mm.toFixed(1)}mm 안팎`;
   return `${mm.toFixed(mm % 1 ? 1 : 0)}mm 안팎`;
 }
 
-function modeAdviceTitle(mode) {
-  const summary = mode?.summary || {};
-  const decision = mode?.decision || {};
-  if (summary.surface === "recovering") return "노면 젖음 주의";
-  if (decision.level === "red" || summary.peakAmount >= 3) return "1시간 러닝 비추천";
-  if (decision.level === "yellow" && (summary.estimatedAmount || 0) <= 1) return "이슬비 가능";
-  if (decision.level === "yellow") return "비 가능";
-  return (summary.estimatedAmount || 0) >= .2 ? "이슬비 가능" : "러닝하기 좋은 편";
-}
-
 function modePrimaryCopy(mode) {
+  if (mode?.decision?.level === "unknown") return "예보 자료를 확인할 수 없어요";
+  if (mode?.samples?.some(s => s.runAssessment?.snow)) return "눈·진눈깨비로 러닝을 미뤄요";
   const summary = mode?.summary || {};
   const decision = mode?.decision || {};
   const amount = summary.estimatedAmount || 0;
   if (summary.surface === "recovering") return "비는 약해도 노면이 젖어 있을 수 있어요";
   if (decision.level === "red" || summary.peakAmount >= 3) return "1시간 러닝은 미루는 게 좋아요";
-  if (amount <= .2 && decision.level === "green") return "1시간 러닝하기 좋은 편이에요";
+  if (amount <= .2 && decision.level === "green") return "눈·비 걱정 적어요";
   if (amount < 1 && decision.level !== "red") return "이슬비 괜찮으면 나가도 돼요";
   if (amount < 3) return "젖어도 괜찮다면 뛸 수 있어요";
   return decision.label || "출발 직전에 다시 확인하세요";
@@ -141,13 +112,8 @@ function surfaceInfo(assessment, recent = state.data?.recentConditions, cameras 
   if (assessment?.surface === "recovering" || assessment?.surface === "wet" || (recent?.recentTotalMm || 0) >= 1) {
     return { short: "젖음 추정", detail: `최근 3시간 ${recent?.recentTotalMm ?? "-"}mm 기준 노면이 젖어 있을 수 있어요`, observed: false };
   }
+  if (!recent?.observations?.length) return { short: "자료 없음", detail: "최근 노면 상태를 추정할 자료가 없어요", observed: false };
   return { short: "건조 추정", detail: "최근 강수 기준으로 노면이 건조한 것으로 추정해요", observed: false };
-}
-
-function decisionStyle(level) {
-  if (level === "red") return { action: "러닝 미루기", symbol: "×" };
-  if (level === "yellow") return { action: "조건부 가능", symbol: "!" };
-  return { action: "출발 가능", symbol: "✓" };
 }
 
 function dataQuality(data, item) {
@@ -155,7 +121,7 @@ function dataQuality(data, item) {
     && ["ultra", "village"].includes(item?.source)
     && Boolean(item?.sourceTime)
     && /(?:초단기|단기)예보/.test(String(item?.sourceLabel || ""));
-  if (!hasOfficialKma) return { label: "자료 일치도 낮음", detail: "공식 기상청 예보를 확인하지 못해 참고용 자료만 보여드려요" };
+  if (!hasOfficialKma) return { label: "자료 없음", detail: "해당 시각의 기상청 예보를 확인하지 못했어요" };
   const hasOfficial = hasOfficialKma;
   const hasModels = Boolean(item?.multiModel?.availableModels);
   const hasRecent = Boolean(data?.recentConditions?.observations?.length);
@@ -166,92 +132,35 @@ function dataQuality(data, item) {
   return { label: "자료 일치도 낮음", detail: "확인 가능한 예보 자료가 부족해요" };
 }
 
-function primaryCopy(first, decision) {
-  const assessment = first?.runAssessment || {};
-  const amount = expectedMm(first) || 0;
-  if (assessment.surface === "recovering") return "비는 약해도 노면이 젖어 있어요";
-  if (decision?.level === "red" || assessment.level === "avoid" || amount >= 3) return "1시간 러닝은 미루는 게 좋아요";
-  if (amount <= .2 && assessment.level === "go") return "1시간 러닝하기 좋은 편이에요";
-  if (amount < 1 && assessment.level !== "avoid") return "이슬비 괜찮으면 나가도 돼요";
-  if (amount < 3) return "젖어도 괜찮다면 뛸 수 있어요";
-  return decision?.label || "출발 직전에 다시 확인하세요";
+function completeMode(mode) {
+  return mode?.decision?.level !== 'unknown' && mode?.samples?.length >= 3 && mode.samples.every(sample => !sample.unavailable && sample.runAssessment?.level !== 'unknown' && Number.isFinite(expectedMm(sample)));
 }
-
 function renderDecision() {
-  const data = state.data;
-  if (!data) return;
-  const mode = activeRunMode();
-  const decision = mode?.decision || data.decision;
-  const first = modePoint(mode, "출발") || data.forecast.find((item) => item.minutes === 30) || data.forecast[0];
-  const style = decisionStyle(decision.level);
-  const quality = dataQuality(data, first);
-  // CCTV는 "지금" 출발 판단에만 현재 관측값으로 반영합니다.
-  // 다음 06시/20시에 현재 CCTV가 건조하다는 사실을 예측 근거처럼 쓰지 않습니다.
-  const surface = surfaceInfo(mode?.summary ? { surface: mode.summary.surface } : first?.runAssessment, data.recentConditions, mode?.immediate ? data.cctvs : []);
-  const hero = $("#decisionHero");
-  hero.className = `decision-hero ${decision.level || "loading"}`;
-  $("#decisionConfidence").textContent = quality.label;
-  $("#decisionAction").textContent = style.action;
-  $("#statusSymbol").textContent = style.symbol;
-  $("#decisionTitle").textContent = mode ? modePrimaryCopy(mode) : primaryCopy(first, decision);
-  if (mode) {
-    const departure = new Date(mode.departureAt);
-    const arrival = new Date(mode.endAt);
-    $("#decisionWindow").textContent = mode.immediate
-      ? `지금 출발 → ${formatTime(arrival)} 복귀 · 1시간 러닝`
-      : `${formatDayTime(departure)} 출발 → ${formatTime(arrival)} 복귀 · 1시간 러닝`;
-  }
-  const surfaceCopy = surface.observed ? `${surface.short} · 관측` : surface.short;
-  const rainProbability = mode ? modeProbabilityCopy(mode) : probabilityCopy(first);
-  const rainAmount = mode ? modeAmountCopy(mode) : rainAmountCopy(first);
-  $("#decisionReason").innerHTML = `<span>• 러닝 중 비 올 확률 ${escapeHtml(rainProbability)}</span><span>• 1시간 예상 강수량 ${escapeHtml(rainAmount)}</span><span>• 노면 · ${escapeHtml(surfaceCopy)}</span>`;
-  const mapCta = $("#runMapCta");
-  if (mode?.withinMapHorizon) {
-    mapCta.hidden = false;
-    mapCta.textContent = mode.immediate ? "지금 비구름 흐름 보기 →" : `${mode.label} 출발 시각 비구름 보기 →`;
-    mapCta.onclick = () => {
-      state.mapHorizon = mode.mapHorizonMinutes;
-      // 예약 시각 전용(예: +3시간 10분)도 지도 헤더/활성 칩/레이더가 같은 시각을 가리켜야 합니다.
-      renderMapSummary();
-      switchView("map");
-    };
-  } else {
-    mapCta.hidden = true;
-  }
+  const data=state.data, mode=activeRunMode(); if(!data||!mode)return;
+  const complete=completeMode(mode), decision=complete?mode.decision:{level:'unknown'};
+  const first=modePoint(mode,'출발');
+  const surface=surfaceInfo({surface:mode.summary?.surface},data.recentConditions,mode.immediate?data.cctvs:[]);
+  const expiredRun=Date.parse(mode.endAt)<Date.now();
+  $('#decisionHero').className=`decision-hero ${decision.level}`;
+  $('#decisionTitle').textContent=complete ? (expiredRun?'당시 눈·비 판단: '+modePrimaryCopy(mode):modePrimaryCopy(mode)):'예보가 부족해 판단을 보류해요';
+  const departure=new Date(mode.departureAt), arrival=new Date(mode.endAt);
+  $('#decisionWindow').textContent=`${expiredRun?'지난 예보 · ':''}${new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric'}).format(departure)} ${formatDayTime(departure)}–${formatTime(arrival)} · 1시간`;
+  const probability=mode.summary?.officialProbabilityMax, mm=mode.summary?.estimatedAmount;
+  $('#decisionReason').innerHTML=complete?`<div class="hero-metrics"><div><small>강수확률</small><b>${Number.isFinite(probability)?probability+'%':'—'}</b></div><div><small>예상 강수량</small><b>${Number.isFinite(mm)?Number(mm.toFixed(2))+'mm':'—'}</b></div></div><p class="surface-copy">노면 ${escapeHtml(surface.short)}${surface.observed?' · 실측':''}</p>`:'<p class="surface-copy">일부 시간의 자료가 없어 눈·비 판단을 제공하지 않습니다.</p>';
+  $('#runMapCta').hidden=false;
+  $('#runMapCta').onclick=()=>{state.mapHorizon=mode.withinMapHorizon?mode.mapHorizonMinutes:0;switchView('map');};
 }
 
 function renderDepartureModes() {
-  const modes = state.data?.runModes || [];
-  $("#departureModes").innerHTML = modes.map((mode) => {
-    const compact = modeAdviceTitle(mode);
-    return `<button class="departure-mode ${mode.id === state.departureMode ? "active" : ""} ${escapeHtml(mode.decision?.level || "")}" data-mode="${escapeHtml(mode.id)}" role="tab" aria-selected="${mode.id === state.departureMode}">
-      <b>${escapeHtml(mode.label)}</b><small>${escapeHtml(compact)}</small><em>${escapeHtml(modeAmountCopy(mode))}</em>
-    </button>`;
-  }).join("");
-  $$("#departureModes button").forEach((button) => button.onclick = () => {
-    state.departureMode = button.dataset.mode;
-    render();
-  });
+  const focused=document.activeElement?.dataset.mode;
+  $('#departureModes').innerHTML=(state.data?.runModes||[]).map(mode=>`<button class="departure-mode ${mode.id===state.departureMode?'active':''}" data-mode="${escapeHtml(mode.id)}" role="tab" aria-selected="${mode.id===state.departureMode}"><b>${escapeHtml(Date.parse(mode.endAt)<Date.now()?(mode.id==='now'?'지난 출발':'지난 '+mode.label):mode.label)}</b><small>${!completeMode(mode)?'—':({green:'무난',yellow:'주의',red:'미루기'}[mode.decision.level]||'—')}</small></button>`).join('');
+  $$('#departureModes button').forEach(button=>button.onclick=()=>{state.departureMode=button.dataset.mode;render();button=document.querySelector(`[data-mode="${state.departureMode}"]`);button?.focus({preventScroll:true});});
+  if(focused)document.querySelector(`[data-mode="${focused}"]`)?.focus({preventScroll:true});
 }
 
 function renderTimeline() {
-  const mode = activeRunMode();
-  if (!mode) return;
-  const start = new Date(mode.departureAt), end = new Date(mode.endAt);
-  $("#currentRunWindow").innerHTML = `<b>${escapeHtml(mode.immediate ? "지금 바로 출발" : mode.detailLabel)}</b><span>${formatDayTime(start)} → ${formatTime(end)} · 1시간</span><small>${escapeHtml(modePrimaryCopy(mode))}</small>`;
-  $("#timelineRail").innerHTML = (mode.samples || []).map((item) => {
-    const at = item.at ? new Date(item.at) : new Date();
-    const level = item.runAssessment?.level || "";
-    return `<article class="run-point ${escapeHtml(level)}"><small>${escapeHtml(item.phase)}</small><b>${formatTime(at)}</b><strong>${escapeHtml(probabilityCopy(item))}</strong><span>${escapeHtml(rainAmountCopy(item))}</span></article>`;
-  }).join("");
-  const note = $("#mapRangeNote");
-  if (mode.withinMapHorizon) {
-    note.innerHTML = mode.immediate
-      ? `<b>현재 강수 영상 가능</b> · 지금의 비구름과 이후 이동을 지도에서 볼 수 있어요.`
-      : `<b>비구름 지도 가능</b> · 현재 기준 ${horizonLabel(mode.mapHorizonMinutes)} 예상 화면을 볼 수 있어요.`;
-  } else {
-    note.innerHTML = `<b>비구름 지도 범위 밖</b> · 이 러닝은 시간별 예보와 여러 예보 모델을 중심으로 판단했어요.`;
-  }
+  const mode=activeRunMode();if(!mode)return;
+  $('#timelineRail').innerHTML=(mode.samples||[]).map(item=>`<article class="run-point"><small>${escapeHtml(item.phase)}</small><b>${formatTime(new Date(item.at))}</b><span>${Number.isFinite(item.probability)?item.probability+'%':'—'} · ${Number.isFinite(expectedMm(item))?Number(expectedMm(item).toFixed(2))+'mm':'—'}</span></article>`).join('');
 }
 
 function evidenceRows() {
@@ -266,7 +175,7 @@ function evidenceRows() {
   const surface = surfaceInfo(mode?.summary ? { surface: mode.summary.surface } : first?.runAssessment, recent, mode?.immediate ? cameras : []);
   const quality = dataQuality(data, first);
   return [
-    { icon: "☂", title: "기상청 예보", copy: mode ? `강수확률 ${modeProbabilityCopy(mode)} · 1시간 예상 ${modeAmountCopy(mode)}` : `강수확률 ${probabilityCopy(first)} · 예상 ${rainAmountCopy(first)}`, status: "확인", warn: mode?.decision?.level === "red" || first?.runAssessment?.level === "avoid" },
+    { icon: "☂", title: "기상청 예보", copy: mode ? `강수확률 ${modeProbabilityCopy(mode)} · 1시간 예상 ${modeAmountCopy(mode)}` : `강수확률 ${probabilityCopy(first)} · 예상 ${rainAmountCopy(first)}`, status: mode?.decision?.level === "unknown" ? "자료 없음" : "확인", warn: mode?.decision?.level === "red" || first?.runAssessment?.level === "avoid" },
     { icon: "≋", title: "최근 비와 노면", copy: recent ? `최근 3시간 ${recent.recentTotalMm}mm · ${surface.detail}` : "최근 강수 자료를 확인하지 못했어요", status: surface.observed ? "관측" : "추정", warn: !recent || first?.runAssessment?.surface !== "dry" },
     { icon: "◇", title: "다른 예보", copy: models ? `${models.availableModels || 0}개 예보 중 ${models.wetVotes || 0}개가 비를 예상해요 · ${quality.detail}` : "다른 예보 자료를 확인하지 못했어요", status: quality.label.replace("자료 일치도 ", ""), warn: quality.label.endsWith("낮음") },
     { icon: "◎", title: "비구름 영상", copy: data.radar?.configured ? "지도에서 비구름의 예상 이동을 직접 볼 수 있어요" : "강수 영상은 현재 연결되지 않았어요", status: data.radar?.configured ? "확인 가능" : "제외", warn: !data.radar?.configured },
@@ -275,10 +184,10 @@ function evidenceRows() {
 }
 
 function renderEvidence() {
-  const rows = evidenceRows();
-  const rowHtml = (row) => `<div class="reason-row ${row.warn ? "warn" : ""}"><span class="reason-icon">${row.icon}</span><div><b>${escapeHtml(row.title)}</b><small>${escapeHtml(row.copy)}</small></div><em>${escapeHtml(row.status)}</em></div>`;
-  $("#reasonList").innerHTML = rows.slice(0, 3).map(rowHtml).join("");
-  $("#evidenceDetail").innerHTML = rows.map((row) => `<div class="evidence-item"><i>${row.icon}</i><div><b>${escapeHtml(row.title)}</b><small>${escapeHtml(row.copy)}</small></div><em>${escapeHtml(row.status)}</em></div>`).join("");
+  const rows=evidenceRows();
+  const rowHtml=row=>`<div class="evidence-item"><div><b>${escapeHtml(row.title)}</b><small>${escapeHtml(row.copy)}</small></div></div>`;
+  $('#evidenceSummary').innerHTML=rows.slice(0,3).map(rowHtml).join('');
+  $('#evidenceDetail').innerHTML=rows.map(rowHtml).join('');
 }
 
 function cctvStatus(camera) {
@@ -298,7 +207,7 @@ function renderCctv() {
       <h3>${escapeHtml(camera.name)}</h3><p>${escapeHtml(camera.rainNow === "unknown" ? status : (camera.evidence || status))}</p>
       <footer><span>원본 영상 직접 보기 ↗</span><i class="${klass}"></i></footer>
     </a>`;
-  }).join("") : `<div class="empty-card">ITS 키가 없거나 조회 가능한 CCTV가 없습니다.<br>없는 자료는 판단에서 제외됩니다.</div>`;
+  }).join("") : `<div class="empty-card">주변 CCTV 없음</div>`;
 
   const realStill = cameras.some((camera) => camera.url && (camera.cctvType === "3" || String(camera.format).toLowerCase().includes("jpg")));
   const publicMode = state.runtime.mode === "public" || state.runtime.aiEnabled === false;
@@ -326,14 +235,9 @@ function renderMapSummary() {
   const modeSample = selectedMode?.samples?.find((sample) => Math.abs(sample.minutes - state.mapHorizon) <= 3);
   const item = state.data?.forecast?.find((entry) => entry.minutes === state.mapHorizon) || modeSample;
   if (!item) return;
-  $("#mapRouteName").textContent = ROUTES[state.route].name;
+
   const mapKind = state.mapHorizon === 0 ? "현재 관측 강수 영상" : state.mapHorizon <= 60 ? "단기 비구름 이동 예측" : "기상청 강수 예측";
-  $("#mapSelected").innerHTML = `<b>${horizonLabel(state.mapHorizon)}</b><span>${escapeHtml(mapKind)} · ${escapeHtml(adviceTitle(item))}</span>`;
-  $("#mapTimeExplain").textContent = state.mapHorizon === 0
-    ? "현재 시각의 관측 강수 영상입니다. 앞으로의 비를 뜻하지는 않아요."
-    : state.mapHorizon <= 60
-      ? "현재 강수대를 바탕으로 한 단기 비구름 이동 예측입니다."
-      : "시간별 예보와 결합한 미래 강수 예측입니다. 멀수록 위치 오차가 커질 수 있어요.";
+  $("#mapSelected").innerHTML = `<b>${horizonLabel(state.mapHorizon)}</b><span>${escapeHtml(mapKind)}</span>`;
   const baseHorizons = state.data?.forecast || [];
   const hasStandardHorizon = baseHorizons.some((entry) => entry.minutes === state.mapHorizon);
   const horizons = hasStandardHorizon || !modeSample ? baseHorizons : [
@@ -344,59 +248,92 @@ function renderMapSummary() {
   $$("#mapHorizons button").forEach((button) => button.onclick = () => selectHorizon(Number(button.dataset.mapHorizon), false));
 }
 
+function setBusy(busy) {
+  $('#refreshBtn').disabled=busy;$('#refreshBtn').setAttribute('aria-busy',String(busy));
+}
 function render() {
-  if (!state.data) return;
-  $("#updatedAt").textContent = state.usingCachedData ? "마지막 자료 표시 중 · 최신 확인 중" : state.contextLoading ? `${formatTime(new Date(state.data.generatedAt))} · CCTV 확인 중` : `${formatTime(new Date(state.data.generatedAt))} 기준`;
-  renderDepartureModes(); renderDecision(); renderTimeline(); renderEvidence(); renderCctv(); renderAviation(); renderMapSummary();
-  if (state.naverMap) drawMapOverlays();
+  if(state.view==='weekly')extras.syncBusy();else setBusy(state.loading);
+  const data=state.data, usable=data&&!data.demo&&data.runModes?.some(completeMode);
+  $('#decisionContent').hidden=!usable;$('#decisionEmpty').hidden=Boolean(usable);
+  if(!usable) {
+    $('#decisionEmpty').innerHTML=state.loading?'<span class="loading-orbit"></span><p>날씨를 확인하고 있어요</p>':'<p>날씨를 불러오지 못했어요</p><button id="retryDecision">다시 시도</button>';
+    $('#retryDecision')?.addEventListener('click',()=>refreshData(true));
+  }
+  const date=data?.dataUpdatedAt;
+  $('#decisionStamp').textContent=usable&&date?`기상청 중심 · ${extras.stamp(date)} 업데이트`:'';
+  $('#mapStamp').textContent=date?`기상청 수치예보 · ${extras.stamp(date)} 업데이트`:'';
+  if(data){renderDepartureModes();renderDecision();renderTimeline();renderEvidence();renderMapSummary();}
+  renderCctv();renderAviation();if(state.naverMap)drawMapOverlays();
 }
 
-async function loadMobileContext(token, controller, cacheKey) {
-  state.contextLoading = true; render();
+async function loadMobileContext(token, controller) {
+  state.contextLoading = true;
   try {
-    const response = await fetch("/api/mobile-context", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ route: state.route }), signal: controller.signal });
+    const response = await fetch("/api/mobile-context", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: state.location }), signal: controller.signal });
     const context = await response.json();
     if (!response.ok) throw new Error(context.error || "CCTV 자료 요청 실패");
     if (token !== state.refreshToken || controller.signal.aborted || !state.data) return;
-    state.data = {
-      ...state.data, ...context,
-      errors: [...(state.data.errors || []), ...(context.errors || [])],
-      // 분석 전 CCTV는 판단을 바꾸지 않습니다. AI 분석 후에는 analyzeCctv가 결론을 갱신합니다.
-    };
-    sessionStorage.setItem(cacheKey, JSON.stringify(state.data));
+    state.data = { ...state.data, cctvs: context.cctvs, cctv: context.cctv, aviation: context.aviation };
     render();
-    if (context.errors?.length) toast(context.errors[0]);
-  } catch (error) {
-    if (error.name !== "AbortError" && token === state.refreshToken) toast(error.message);
-  } finally {
-    if (token === state.refreshToken) { state.contextLoading = false; render(); }
-  }
+  } catch (error) { /* Context failure leaves existing evidence intact. */ }
+  finally { if (token === state.refreshToken) state.contextLoading = false; }
 }
 
-async function refreshData() {
+async function refreshData(force = true) {
   state.refreshController?.abort();
   const controller = new AbortController();
   state.refreshController = controller;
   const token = ++state.refreshToken;
-  state.loading = true; state.contextLoading = false; $("#refreshBtn").disabled = true; $("#refreshBtn").textContent = "최신 확인 중";
-  const cacheKey = `runcast.mobile.snapshot.${state.route}`;
-  const cached = sessionStorage.getItem(cacheKey);
-  if (!state.data && cached) {
-    try { state.data = JSON.parse(cached); state.usingCachedData = true; render(); }
-    catch { sessionStorage.removeItem(cacheKey); }
-  }
+  const pointKey = locationKey(state.location);
+  const cached = readForecastCache('core', pointKey);
+  if (!state.data && cached) { state.data = cached; state.usingCachedData = true; render(); }
+  if (!force && cached && Date.now() < Date.parse(cached.expiresAt)) { state.loading = false; $("#refreshBtn").disabled = false;  render(); void loadMobileContext(token, controller); return; }
+  state.loading = true; state.contextLoading = false;
+  $("#refreshBtn").disabled = true;  render();
   try {
-    const response = await fetch("/api/mobile-forecast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ route: state.route }), signal: controller.signal });
+    const response = await fetch("/api/mobile-forecast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: state.location }), signal: controller.signal });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "날씨 자료 요청 실패");
     if (token !== state.refreshToken) return;
-    state.data = payload; state.usingCachedData = false; render();
-    if (state.view === "map") await startRadarSequence();
-    if (payload.errors?.length) toast(payload.errors[0]);
-    // CCTV·항공기상은 초기 결론 뒤에 붙입니다. 응답을 기다리며 첫 화면을 막지 않습니다.
-    void loadMobileContext(token, controller, cacheKey);
-  } catch (error) { if (error.name !== "AbortError") toast(error.message); }
-  finally { if (token === state.refreshToken) { state.loading = false; $("#refreshBtn").disabled = false; $("#refreshBtn").textContent = "새로고침"; } }
+    const usable = !payload.demo && payload.runModes?.some(completeMode);
+    if (!usable && state.data?.runModes?.some(m => m.decision.level !== 'unknown')) {
+      state.usingCachedData = true;
+    } else {
+      payload.expiresAt = new Date(Date.parse(payload.dataUpdatedAt || payload.generatedAt)+5*60000).toISOString();
+      state.data = payload; state.usingCachedData = false;
+      if (usable) writeForecastCache('core', pointKey, payload);
+    }
+    render();
+    if (state.view === "map") void startRadarSequence();
+    void loadMobileContext(token, controller);
+  } catch (error) {
+    if (error.name !== "AbortError" && token === state.refreshToken) {
+      state.usingCachedData = Boolean(state.data);
+      if (!state.data) resetDecision('날씨를 불러오지 못했어요');
+      if(force)toast(state.data ? '갱신 실패 · 기존 자료를 유지합니다' : '날씨를 불러오지 못했어요');
+    }
+  } finally { if (token === state.refreshToken) { state.loading = false; $("#refreshBtn").disabled = false;  render(); } }
+}
+
+function resetDecision() { render(); $('#mapHorizons').replaceChildren(); $('#mapSelected').textContent='현재 기준'; }
+
+const extras = createExtras(state, { toast, switchView, loadNaverSdk, openSheet, setBusy,
+  resetNaverSdk(){state.naverSdkPromise=null;},
+  async changeLocation(point) {
+    state.refreshController?.abort();++state.refreshToken;
+    state.location=point;state.route=point.id;state.data=null;state.usingCachedData=false;
+    clearMapOverlays();state.radarOverlay?.setMap(null);++state.radarLoadToken;
+    state.radarFrames=[];$('#mapStamp').textContent='';
+    if(state.naverMap)state.naverMap.panTo(new naver.maps.LatLng(point.lat,point.lon));
+    if(state.view==='weekly'){render();return;}
+    await refreshData(false);
+  }
+});
+
+async function refreshMap() {
+  setBusy(true);
+  try { state.naverSdkPromise=null;await ensureMap();await startRadarSequence(); }
+  finally { if(state.view==='map')setBusy(false); }
 }
 
 function selectHorizon(minutes, openMap) {
@@ -405,18 +342,16 @@ function selectHorizon(minutes, openMap) {
   else if (state.view === "map") { drawMapOverlays(); startRadarSequence(); }
 }
 
+const viewScroll={};
 async function switchView(view) {
-  state.view = view;
-  $$(".mobile-view").forEach((section) => section.classList.toggle("active", section.dataset.view === view));
-  $$(".bottom-nav button").forEach((button) => button.classList.toggle("active", button.dataset.tab === view));
-  window.scrollTo({ top: 0, behavior: "auto" });
-  if (view === "map") {
-    await ensureMap();
-    if (state.naverMap) { naver.maps.Event.trigger(state.naverMap, "resize"); drawMapOverlays(); }
-    await startRadarSequence();
-  } else {
-    clearInterval(state.radarTimer); state.radarTimer = null;
-  }
+  viewScroll[state.view]=window.scrollY;state.view=view;
+  $$('.mobile-view').forEach(section=>section.classList.toggle('active',section.dataset.view===view));
+  $$('.bottom-nav button').forEach(button=>{button.classList.toggle('active',button.dataset.tab===view);if(button.dataset.tab===view)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');});
+  window.scrollTo({top:viewScroll[view]||0,behavior:'auto'});
+  if(view==='weekly'){void extras.loadWeekly();extras.syncBusy();}
+  else {render();if(!state.loading&&(!state.data||Date.now()>=Date.parse(state.data.expiresAt)))void refreshData(false);}
+  if(view==='map'){await ensureMap();if(state.naverMap){naver.maps.Event.trigger(state.naverMap,'resize');drawMapOverlays();}await startRadarSequence();}
+  else {clearInterval(state.radarTimer);state.radarTimer=null;}
 }
 
 function loadNaverSdk(key) {
@@ -427,11 +362,11 @@ function loadNaverSdk(key) {
     let completed = false;
     const finish = (ready) => { if (completed) return; completed = true; resolve(Boolean(ready)); };
     window.initRunCastMobileNaver = () => { if (window.naver?.maps) finish(true); };
-    window.navermap_authFailure = () => { toast("Naver 지도 인증 URL과 Client ID를 확인하세요."); finish(false); };
+    window.navermap_authFailure = () => { finish(false); };
     const script = document.createElement("script");
     script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${encodeURIComponent(key)}&callback=initRunCastMobileNaver`;
     script.onload = () => { if (window.naver?.maps) finish(true); };
-    script.onerror = () => { toast("Naver 지도 SDK를 불러오지 못했습니다."); finish(false); };
+    script.onerror = () => { finish(false); };
     document.head.appendChild(script);
     setTimeout(() => finish(Boolean(window.naver?.maps)), 6000);
   });
@@ -441,15 +376,15 @@ function loadNaverSdk(key) {
 async function ensureMap() {
   if (state.naverMap) return true;
   const ready = await loadNaverSdk(state.keys.naverKey);
-  if (!ready) { $("#mapLoading p").textContent = "Naver 지도 키가 없거나 허용 URL이 등록되지 않았습니다."; return false; }
+  if (!ready) { $("#mapLoading p").textContent = "지도를 불러오지 못했어요. 다시 시도해 주세요."; return false; }
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  const route = ROUTES[state.route];
+  const route = state.location;
   state.naverMap = new naver.maps.Map("mobileNaverMap", {
     center: new naver.maps.LatLng(route.lat, route.lon), zoom: 11,
     mapTypeId: naver.maps.MapTypeId.NORMAL, mapTypeControl: false,
     zoomControl: true, zoomControlOptions: { position: naver.maps.Position.RIGHT_CENTER },
   });
-  $("#mapLoading").classList.add("hidden"); $("#mapSource").textContent = "Naver 일반지도";
+  $("#mapLoading").classList.add("hidden");
   drawMapOverlays();
   return true;
 }
@@ -459,7 +394,7 @@ function clearMapOverlays() { state.overlays.forEach((overlay) => overlay.setMap
 function drawMapOverlays() {
   if (!state.naverMap || !state.data) return;
   clearMapOverlays();
-  const route = ROUTES[state.route];
+  const route = state.location;
   state.naverMap.panTo(new naver.maps.LatLng(route.lat, route.lon));
   state.overlays.push(new naver.maps.Marker({ map: state.naverMap, position: new naver.maps.LatLng(route.lat, route.lon), icon: { content: `<div class="naver-marker-mobile route">RUN</div>`, anchor: new naver.maps.Point(22, 16) } }));
   for (const camera of state.data.cctvs || []) {
@@ -570,7 +505,7 @@ function syncRadarTimer() {
 async function startRadarSequence() {
   clearInterval(state.radarTimer); state.radarTimer = null;
   if (!state.data?.radar?.configured || !state.naverMap || state.view !== "map") {
-    $("#radarState").textContent = state.data?.radar?.configured ? "지도 대기" : "키 없음";
+    $("#radarState").textContent = state.data?.radar?.configured ? "지도 대기" : "자료 없음";
     state.radarOverlay?.setMap(null); return;
   }
   const blended = state.mapHorizon > 60;
@@ -606,11 +541,29 @@ async function analyzeCctv() {
   finally { state.analyzing = false; $("#analyzeBtn").textContent = "CCTV로 비·노면 확인"; renderCctv(); }
 }
 
-function openSettings() {
-  $("#settingsSheet").classList.add("open");
+let activeSheet=null, pendingSheetPop=null, resolveSheetPop=null;
+const silentSheetCloses=new WeakSet(), sheetFocus=new WeakMap();
+async function openSheet(dialog) {
+  if(pendingSheetPop)await pendingSheetPop;
+  if(dialog.open)return;
+  const returnTo=dialog.id==='cctvSheet'?$('#openCctv'):document.activeElement;
+  sheetFocus.set(dialog,returnTo);
+  if(activeSheet?.open){silentSheetCloses.add(activeSheet);activeSheet.close();history.replaceState({runcastSheet:dialog.id},'');}
+  else history.pushState({runcastSheet:dialog.id},'');
+  activeSheet=dialog;dialog.showModal();
+  dialog.addEventListener('close',()=>{
+    if(silentSheetCloses.has(dialog)){silentSheetCloses.delete(dialog);return;}
+    if(activeSheet===dialog)activeSheet=null;
+    if(history.state?.runcastSheet===dialog.id){pendingSheetPop=new Promise(resolve=>{resolveSheetPop=resolve;});history.back();}
+    returnTo?.focus({preventScroll:true});
+  },{once:true});
 }
-
-function closeSettings() { $("#settingsSheet").classList.remove("open"); }
+window.addEventListener('popstate',()=>{
+  if(activeSheet?.open){const returnTo=sheetFocus.get(activeSheet);silentSheetCloses.add(activeSheet);activeSheet.close();activeSheet=null;returnTo?.focus({preventScroll:true});}
+  resolveSheetPop?.();resolveSheetPop=null;pendingSheetPop=null;
+});
+function openSettings(){void openSheet($('#settingsSheet'));}
+function closeSettings(){$('#settingsSheet').close();}
 
 function renderConnectionStatus() {
   const rows = [
@@ -625,10 +578,18 @@ function renderConnectionStatus() {
 async function boot() {
   $$(".bottom-nav button").forEach((button) => button.onclick = () => switchView(button.dataset.tab));
   $$('[data-open-view]').forEach((button) => button.onclick = () => switchView(button.dataset.openView));
-  $("#routeSelect").onchange = async (event) => { state.route = event.target.value; state.data = null; state.usingCachedData = false; await refreshData(); };
-  $("#refreshBtn").onclick = refreshData; $("#radarPlay").onclick = () => { state.radarPlaying = !state.radarPlaying; syncRadarTimer(); };
+  extras.boot();
+  resetDecision();
+  $("#refreshBtn").onclick = () => state.view === "weekly" ? extras.loadWeekly(true) : state.view === "map" ? refreshMap() : refreshData(true); $("#radarPlay").onclick = () => { state.radarPlaying = !state.radarPlaying; syncRadarTimer(); };
   $("#analyzeBtn").onclick = analyzeCctv; $("#settingsBtn").onclick = openSettings; $("#closeSettings").onclick = closeSettings;
-  $("#settingsSheet").onclick = (event) => { if (event.target.id === "settingsSheet") closeSettings(); };
+  $('#moreBtn').onclick=()=>{const hidden=!$('#moreMenu').hidden;$('#moreMenu').hidden=hidden;$('#moreBtn').setAttribute('aria-expanded',String(!hidden));};
+  $('#settingsBtn').onclick=()=>{$('#moreMenu').hidden=true;$('#moreBtn').setAttribute('aria-expanded','false');openSettings();};
+  $('#openEvidence').onclick=()=>openSheet($('#evidenceSheet'));
+  $('#openCctv').onclick=()=>openSheet($('#cctvSheet'));
+  $('#evidenceCctv').onclick=async()=>{await switchView('map');await openSheet($('#cctvSheet'));};
+  $$('[data-close-sheet]').forEach(button=>button.onclick=()=>button.closest('dialog').close());
+  $$('dialog').forEach(dialog=>dialog.addEventListener('click',event=>{if(event.target===dialog){const bounds=dialog.getBoundingClientRect();if(event.clientY<bounds.top||event.clientX<bounds.left||event.clientX>bounds.right)dialog.close();}}));
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'){$('#moreMenu').hidden=true;$('#moreBtn').setAttribute('aria-expanded','false');}});
   try {
     const config = await fetch("/api/config").then((response) => response.json());
     state.runtime = { ...state.runtime, ...(config.runtime || {}) };
@@ -641,7 +602,16 @@ async function boot() {
     state.codex = await fetch("/api/status").then((response) => response.json());
     if (state.codex.runtimeMode) state.runtime = { ...state.runtime, mode: state.codex.runtimeMode, aiEnabled: state.codex.aiEnabled };
   } catch { state.codex = { codex: false }; }
-  await refreshData();
+  await refreshData(false);
+  const refreshVisible = () => {
+    if (document.visibilityState !== 'visible') return;
+    if (state.view === 'weekly') { extras.loadWeekly(); return; }
+    if (!state.loading && (!state.data || Date.now() >= Date.parse(state.data.expiresAt || 0))) void refreshData(false);
+  };
+  document.addEventListener('visibilitychange', refreshVisible);
+  window.addEventListener('online', refreshVisible);
+  setInterval(refreshVisible, 60000);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
 }
 
 boot();

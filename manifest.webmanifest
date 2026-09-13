@@ -1,8 +1,8 @@
 {
   "id": "/mobile.html",
-  "name": "RunCast 잠실 — 러닝 날씨 확인",
-  "short_name": "RunCast 잠실",
-  "description": "지금, 오전 6시, 오후 8시의 잠실 1시간 러닝 날씨를 확인합니다.",
+  "name": "RunCast — 러닝 날씨",
+  "short_name": "RunCast",
+  "description": "국내 러닝 위치의 눈·비, 7일 시간별 예보와 옷차림을 확인합니다.",
   "start_url": "/mobile.html",
   "scope": "/",
   "display": "standalone",

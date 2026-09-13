@@ -1,3 +1,4 @@
+import { ROUTES, resolveLocation, normalizeWeekly, numberOrNull } from './assets/weather-domain.mjs';
 import http from "node:http";
 import https from "node:https";
 import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
@@ -28,11 +29,7 @@ const CODEX_COMMANDS = [...new Set([
   "codex",
 ].filter(Boolean))];
 
-const ROUTES = {
-  seokchon: { name: "석촌호수", lat: 37.5082, lon: 127.1001 },
-  olympic: { name: "올림픽공원", lat: 37.5207, lon: 127.1215 },
-  hanriver: { name: "잠실 한강", lat: 37.5197, lon: 127.0857 },
-};
+
 
 function parseEnvFile(source) {
   const values = {};
@@ -219,7 +216,9 @@ export async function cachedRawLoad(key, loader, options = {}) {
   }
   if (inflightCache.has(key)) {
     cacheDiagnostic(trace, key, "coalesced", existing);
-    return inflightCache.get(key);
+    const value = await inflightCache.get(key);
+    cacheDiagnostic(trace, key, "coalesced-result", rawCache.get(key));
+    return value;
   }
   cacheDiagnostic(trace, key, existing?.value !== undefined ? "refresh" : "miss", existing);
   const staleEntry = existing?.value !== undefined && now < existing.staleUntil ? existing : null;
@@ -367,16 +366,17 @@ function latLonToKmaGrid(lat, lon) {
 }
 
 function parseRainMm(value) {
-  if (value == null) return 0;
+  if (value == null || value === "") return null;
   const text = String(value);
   if (text.includes("강수없음")) return 0;
   if (text.includes("미만")) return 0.5;
   const match = text.match(/[\d.]+/);
-  return match ? Number(match[0]) : 0;
+  return match ? Number(match[0]) : null;
 }
 
 function rainLevel(mm, pty) {
   if (Number(pty) > 0 || mm >= 1) return mm >= 5 ? "heavy" : mm >= 1 ? "moderate" : "light";
+  if (mm == null && (pty == null || pty === "")) return "unknown";
   if (mm > 0) return "light";
   return "none";
 }
@@ -459,14 +459,14 @@ async function getKmaForecast(serviceKey, route, requestedMinutes = [0, 30, 60, 
     const level = rainLevel(mm, group?.PTY);
     return {
       minutes,
-      rain: level !== "none",
+      rain: !["none", "unknown"].includes(level),
       level,
-      mm,
+      mm, precipitationType: numberOrNull(group?.PTY), unavailable: mm == null || !group || group.targetDiffMinutes > 45,
       amountText: mm > 0 ? String(group?.RN1 || `${mm} mm`) : "0 mm",
       amountPeriod: "1시간 기준",
-      temperature: Number(group?.T1H ?? 0),
-      humidity: Number(group?.REH ?? 0),
-      windSpeed: Number(group?.WSD ?? 0),
+      temperature: numberOrNull(group?.T1H),
+      humidity: numberOrNull(group?.REH),
+      windSpeed: numberOrNull(group?.WSD),
       sourceTime: group?.date?.toISOString() || null,
       issuedAt: issuedAt.toISOString(),
       issueAgeMinutes: Math.max(0, Math.round((now.getTime() - issuedAt.getTime()) / 60_000)),
@@ -556,17 +556,17 @@ async function getKmaVilageForecastSet(serviceKey, route, minutesList, now = new
     return minutesList.map((minutes) => {
       const target = new Date(now.getTime() + minutes * 60_000);
       const group = nearestForecast(groups, target);
-      if (!group) return null;
+      if (!group || group.targetDiffMinutes > 45) return null;
       const previousGroup = nearestForecast(groups, new Date(target.getTime() - 60 * 60_000));
       const nextGroup = nearestForecast(groups, new Date(target.getTime() + 60 * 60_000));
       const mm = parseRainMm(group.PCP);
       const level = rainLevel(mm, group.PTY);
       return {
-        minutes, rain: level !== "none", level, mm,
+        minutes, rain: !["none", "unknown"].includes(level), level, mm, precipitationType: numberOrNull(group.PTY), unavailable: mm == null,
         amountText: mm > 0 ? String(group.PCP || `${mm} mm`) : "0 mm",
         amountPeriod: "1시간 기준",
-        temperature: Number(group.TMP ?? 0), humidity: Number(group.REH ?? 0), windSpeed: Number(group.WSD ?? 0),
-        probability: Number(group.POP ?? 0), probabilitySource: "단기예보", sourceTime: group.date?.toISOString() || null,
+        temperature: numberOrNull(group.TMP), humidity: numberOrNull(group.REH), windSpeed: numberOrNull(group.WSD),
+        probability: numberOrNull(group.POP), probabilitySource: "단기예보", sourceTime: group.date?.toISOString() || null,
         issuedAt: issuedAt.toISOString(),
         issueAgeMinutes: Math.max(0, Math.round((now.getTime() - issuedAt.getTime()) / 60_000)),
         targetDiffMinutes: group.targetDiffMinutes,
@@ -662,7 +662,7 @@ async function getMultiModelForecast(route, minutesList, now = new Date(), cache
   return minutesList.map((minutes) => {
     const target = new Date(now.getTime() + minutes * 60_000);
     const index = nearestIndex(target);
-    if (index < 0) return null;
+    if (index < 0 || Math.abs(times[index].getTime()-target.getTime()) > 45*60000) return null;
     const numeric = (value) => value == null || value === "" ? null : Number(value);
     const values = models.map((model) => {
       const probability = numeric(hourly[model.probability]?.[index]);
@@ -700,7 +700,9 @@ async function getMultiModelForecast(route, minutesList, now = new Date(), cache
   }).filter(Boolean);
 }
 
-function assessRunForecast(item, recentConditions) {
+export function assessRunForecast(item, recentConditions) {
+  if (item.unavailable || item.source === "demo") return { level: "unknown", label: "자료 없음", reason: "해당 시간 예보를 확인할 수 없습니다.", expectedAmount: null, combinedRisk: null, surface: "unknown" };
+  if ([2,3,6,7].includes(item.precipitationType)) return { level: "avoid", label: "눈·진눈깨비 예상", reason: "러닝 구간에 눈 또는 진눈깨비가 예상됩니다. 노면 미끄러움에 주의하세요.", expectedAmount: item.mm, combinedRisk: item.probability, surface: "wet", snow: true };
   const model = item.multiModel || {};
   const probabilityInputs = [
     item.probability, item.nextHourProbability,
@@ -827,7 +829,7 @@ async function getItsCctv(apiKey, target, cacheTrace = []) {
       cctvtype: parseXmlTag(match[1], "cctvtype"),
     }));
   }
-  const cameras = raw.map((item) => normalizeCctv(item, target)).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon) && c.url);
+  const cameras = raw.map((item) => normalizeCctv(item, target)).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon) && c.url && c.distance <= 15);
   const chosen = chooseDirectionalCctv(cameras);
   for (const camera of chosen) knownCctvUrls.add(camera.url);
   return chosen;
@@ -857,17 +859,8 @@ async function getAviation(cacheTrace = []) {
   };
 }
 
-function demoForecast() {
-  return [
-    { minutes: 30, rain: false, level: "none", mm: 0, amountText: "0 mm", amountPeriod: "1시간 기준", probability: 10, temperature: 24, humidity: 72, windSpeed: 2.1 },
-    { minutes: 60, rain: true, level: "light", mm: 0.5, amountText: "1 mm 미만", amountPeriod: "1시간 기준", probability: 40, temperature: 23, humidity: 81, windSpeed: 2.8 },
-    { minutes: 180, rain: true, level: "moderate", mm: 2, amountText: "2 mm", amountPeriod: "1시간 기준", probability: 70, temperature: 22, humidity: 88, windSpeed: 3.4 },
-    { minutes: 360, rain: false, level: "none", mm: 0, amountText: "0 mm", amountPeriod: "1시간 기준", probability: 20, temperature: 23, humidity: 76, windSpeed: 2.0 },
-    { minutes: 540, rain: false, level: "none", mm: 0, amountText: "0 mm", amountPeriod: "1시간 기준", temperature: 22, humidity: 78, windSpeed: 1.8, probability: 20, source: "village", sourceLabel: "단기예보 샘플" },
-  ];
-}
-
 function makeDecisionForRunWindow(runWindow, cctvs = []) {
+  if (!runWindow.length || runWindow.some(item => item.unavailable || item.source === "demo" || item.runAssessment?.level === "unknown")) return { level: "unknown", label: "자료 없음", short: "확인 불가", confidence: 0, reason: "해당 1시간의 예보가 부족해 출발 판단을 제공하지 않습니다." };
   const activeUpstream = cctvs.filter((c) => ["남", "남서", "서"].includes(c.sector) && c.rainNow === "yes" && c.cameraUsable !== false && c.confidence >= 0.65);
   // AI가 실제로 분석한, 신뢰 가능한 젖은 노면만 반영합니다. unknown은 절대 관측값이 아닙니다.
   const reliableWetSurface = cctvs.filter((c) => ["yes", "no", "uncertain"].includes(c.rainNow) && c.cameraUsable !== false && c.confidence >= 0.65 && c.roadWet === true);
@@ -911,16 +904,16 @@ export function makeDecision(forecast, cctvs = []) {
  * 1시간 동안의 예상 누적량을 보수적으로 근사하고 최대 시간당 강수량도 별도 제공합니다.
  */
 export function summarizeRunWindow(samples = []) {
-  const amounts = samples.map((item) => item?.runAssessment?.expectedAmount).map(Number).filter(Number.isFinite);
-  const officialProbabilities = samples.map((item) => item?.probability).map(Number).filter(Number.isFinite);
+  const amounts = samples.map((item) => item?.runAssessment?.expectedAmount).filter(Number.isFinite);
+  const officialProbabilities = samples.map((item) => item?.probability).filter(Number.isFinite);
   // 통합 위험도가 공식 POP보다 낮더라도 사용자에게 더 낮은 확률로 보이지 않게 둘 다 반영합니다.
-  const risks = samples.flatMap((item) => [item?.runAssessment?.combinedRisk, item?.probability]).map(Number).filter(Number.isFinite);
+  const risks = samples.flatMap((item) => [item?.runAssessment?.combinedRisk, item?.probability]).filter(Number.isFinite);
   const surfaces = samples.map((item) => item?.runAssessment?.surface || "dry");
   const start = Number(samples[0]?.runAssessment?.expectedAmount ?? samples[0]?.mm ?? 0) || 0;
   const middle = Number(samples[1]?.runAssessment?.expectedAmount ?? samples[1]?.mm ?? start) || 0;
   const end = Number(samples[2]?.runAssessment?.expectedAmount ?? samples[2]?.mm ?? middle) || 0;
   // 30분 간격 3점의 사다리꼴 적분. 각 값은 mm/h로 취급합니다.
-  const estimatedAmount = Math.round((start * .25 + middle * .5 + end * .25) * 10) / 10;
+  const estimatedAmount = amounts.length === samples.length && amounts.length ? Math.round((start * .25 + middle * .5 + end * .25) * 10) / 10 : null;
   const peakAmount = amounts.length ? Math.round(Math.max(...amounts) * 10) / 10 : null;
   const probabilityMax = risks.length ? roundToFive(Math.max(...risks)) : null;
   const probabilityAverage = risks.length ? roundToFive(average(risks)) : null;
@@ -959,7 +952,7 @@ function radarSummary(keys, demo) {
   return {
     configured: Boolean(activeRadarKey),
     direction: "남서 → 북동",
-    etaMinutes: demo ? 42 : null,
+    etaMinutes: null,
     imageUrl: activeRadarKey ? `/api/radar?minutes=30&v=${Date.now()}` : null,
     frameStepMinutes: 5,
     maxMapleMinutes: 60,
@@ -976,8 +969,31 @@ function radarSummary(keys, demo) {
   };
 }
 
+function oldestForecastFetch(trace) {
+  const dates = trace.filter(t => t.provider === "kma" && ["ultra-srt-fcst", "village-fcst"].includes(t.dataset) && ["stored", "fresh-hit", "stale-if-error", "coalesced-result"].includes(t.state)).map(t => t.fetchedAt).filter(Boolean).sort();
+  return dates[0] || null;
+}
+
+async function weeklyForecast(body) {
+  const location = resolveLocation(body), trace = [];
+  const params = new URLSearchParams({
+    latitude: String(location.lat), longitude: String(location.lon), timezone: "Asia/Seoul", forecast_days: "8", wind_speed_unit: "ms",
+    hourly: "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code",
+    daily: "temperature_2m_min,temperature_2m_max,weather_code",
+  });
+  // Eighth day's midnight provides the return sample for day seven at 23:00.
+  const payload = await cachedRawLoad(buildRawCacheKey({ provider: "open-meteo", dataset: "weekly", location: `${location.lat},${location.lon}`, cycle: kstDateKey(new Date()), variant: "v1-8d-ms" }), async () => {
+    const data = await fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, { timeout: 15000 });
+    normalizeWeekly(data, location, new Date().toISOString());
+    return data;
+  }, { trace, freshMs: 30*60000, staleMs: 7*86400000 });
+  const entry = trace.filter(t => t.fetchedAt).at(-1);
+  if (!entry) throw new Error("예보 조회 시각을 확인하지 못했습니다.");
+  return normalizeWeekly(payload, location, entry.fetchedAt);
+}
+
 async function mobileForecast(body) {
-  const route = ROUTES[body.route] || ROUTES.seokchon;
+  const route = resolveLocation(body);
   const keys = effectiveKeys(body.keys);
   activeRadarKey = String(keys.kmaHubKey || "").trim();
   if (!activeRadarKey) radarCache.clear();
@@ -995,19 +1011,17 @@ async function mobileForecast(body) {
     catch (error) { errors.push(`기상청: ${error.message}`); }
   }
   if (!forecast) {
-    // 키가 없을 때도 화면 형식은 유지하되, 예약 시각을 9시간 값으로 대체하지 않습니다.
-    const demoByMinutes = new Map(demoForecast().map((item) => [item.minutes, item]));
-    forecast = requestedMinutes.map((minutes) => demoByMinutes.get(minutes) || {
-      minutes, rain: false, level: "unknown", mm: 0, probability: null,
-      amountText: "자료 없음", source: "demo", sourceLabel: "예보 키 없음", unavailable: true,
-    });
-    demo = true;
+    forecast = requestedMinutes.map(minutes => ({
+      minutes, rain: false, level: "unknown", mm: null, probability: null,
+      temperature: null, humidity: null, windSpeed: null,
+      amountText: "자료 없음", source: "unavailable", sourceLabel: "예보 없음", unavailable: true,
+    }));
   }
 
   let recentConditions = null, multiModelForecast = [];
   const contextResults = await Promise.allSettled([
     keys.kmaServiceKey ? getKmaRecentConditions(keys.kmaServiceKey, route, now, cacheTrace) : Promise.resolve(null),
-    getMultiModelForecast(route, forecast.map((item) => item.minutes), now, cacheTrace),
+    forecast.some(item => !item.unavailable) ? getMultiModelForecast(route, forecast.map((item) => item.minutes), now, cacheTrace) : Promise.resolve([]),
   ]);
   if (contextResults[0].status === "fulfilled") recentConditions = contextResults[0].value;
   else errors.push(`최근 실황: ${contextResults[0].reason?.message || "조회 실패"}`);
@@ -1024,7 +1038,7 @@ async function mobileForecast(body) {
   // 예약 러닝의 절대 시각 샘플은 runModes 아래로 별도 전달합니다.
   const mapForecast = mapMinutes.map((minutes) => forecast.find((item) => item.minutes === minutes)).filter(Boolean);
   const payload = {
-    generatedAt: now.toISOString(), route, forecast: mapForecast, runModes, recentConditions,
+    generatedAt: now.toISOString(), dataUpdatedAt: oldestForecastFetch(cacheTrace), route, forecast: mapForecast, runModes, recentConditions,
     cctvs: [], cctv: { configured: Boolean(keys.itsApiKey), available: false, included: false }, aviation: { metar: [], taf: [] },
     decision: makeDecision(mapForecast, []), demo, errors,
     radar: radarSummary(keys, demo),
@@ -1035,14 +1049,14 @@ async function mobileForecast(body) {
 }
 
 async function mobileContext(body) {
-  const route = ROUTES[body.route] || ROUTES.seokchon;
+  const route = resolveLocation(body);
   const keys = effectiveKeys(body.keys);
   const cacheTrace = [];
   const errors = [];
   // CCTV와 항공기상은 첫 판단과 독립적이므로 병렬·후속으로 조회합니다.
   const [cctvResult, aviationResult] = await Promise.allSettled([
     keys.itsApiKey ? getItsCctv(keys.itsApiKey, route, cacheTrace) : Promise.resolve([]),
-    getAviation(cacheTrace),
+    haversine(route.lat, route.lon, 37.5082, 127.1001) <= 65 ? getAviation(cacheTrace) : Promise.resolve({ metar: [], taf: [] }),
   ]);
   const cctvs = cctvResult.status === "fulfilled" ? cctvResult.value : [];
   if (cctvResult.status === "rejected") errors.push(`CCTV: ${cctvResult.reason?.message || "조회 실패"}`);
@@ -1259,7 +1273,7 @@ async function getStatus() {
 async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
-    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css",
+    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/weather-domain.mjs", "assets/mobile-extra.js", "sw.js",
     "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/apple-touch-icon-v2.png", "assets/pwa-icon-192.png",
     "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png",
     "assets/apple-startup-1320x2868.png", "assets/apple-startup-1206x2622.png",
@@ -1274,7 +1288,7 @@ async function serveFile(pathname, res) {
   if (!filePath.startsWith(ROOT)) return sendJson(res, 404, { error: "Not found" });
   try {
     const data = await readFile(filePath);
-    const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml" };
+    const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml" };
     res.writeHead(200, { "Content-Type": types[extname(filePath)] || "application/octet-stream", "Cache-Control": "no-cache" });
     res.end(data);
   } catch {
@@ -1299,6 +1313,7 @@ export async function requestHandler(req, res) {
     });
     if (req.method === "GET" && url.pathname === "/api/status") return sendJson(res, 200, await getStatus());
     if (req.method === "GET" && url.pathname === "/api/radar") return await sendRadarGraphic(res, Number(url.searchParams.get("minutes")));
+    if (req.method === "POST" && url.pathname === "/api/weekly-forecast") return sendJson(res, 200, await weeklyForecast(await readJson(req)));
     if (req.method === "POST" && url.pathname === "/api/mobile-forecast") return sendJson(res, 200, await mobileForecast(await readJson(req)));
     if (req.method === "POST" && url.pathname === "/api/mobile-context") return sendJson(res, 200, await mobileContext(await readJson(req)));
     if (req.method === "POST" && url.pathname === "/api/snapshot") return sendJson(res, 200, await snapshot(await readJson(req)));
