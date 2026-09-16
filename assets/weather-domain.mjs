@@ -5,6 +5,9 @@ export const ROUTES = {
   hanriver: { id: 'hanriver', name: '잠실 한강', lat: 37.5197, lon: 127.0857 },
 };
 export const numberOrNull = value => value == null || value === '' || !Number.isFinite(Number(value)) ? null : Number(value);
+// Open-Meteo JSON values are numeric. Keep malformed string samples out of the
+// browser contract so a quoted "0" cannot become a valid zero by coercion.
+const strictNumberOrNull = value => value == null || value === '' || !Number.isFinite(value) ? null : value;
 // Supported Korean mainland/coastal envelope, plus Jeju, Ulleung and Dokdo.
 // Deliberately bounded: not a global geocoder or a legal boundary dataset.
 export function isSupportedLocation(lat, lon) {
@@ -37,11 +40,33 @@ export function resolveLocation(body = {}) {
 }
 export const locationKey = p => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`;
 export const kstDay = (date = new Date()) => new Date(+date + 9*3600000).toISOString().slice(0,10);
+// Open-Meteo hourly values are matched to the exact local-hour bucket. Keeping
+// this pure makes the same rule usable by the running card and weekly table.
+export function hourlyBucketEpoch(value) {
+  const epoch = value instanceof Date ? +value : typeof value === 'number' ? value : Date.parse(value || '');
+  return Number.isFinite(epoch) ? Math.floor(epoch / 3600000) * 3600000 : null;
+}
+export function hourlyPointAt(hourly, target) {
+  const bucket = hourlyBucketEpoch(target);
+  if (!Array.isArray(hourly) || bucket == null) return null;
+  return hourly.find(point => hourlyBucketEpoch(point?.time) === bucket) || null;
+}
+export function hourlyTemperatureAt(hourly, target) {
+  const temperature = hourlyPointAt(hourly, target)?.temperature;
+  return Number.isFinite(temperature) ? temperature : null;
+}
+// Use one display rule in both views. Number#toFixed handles -2.5 as -3,
+// avoiding the asymmetric Math.round result for negative decimal values.
+export function roundTemperature(value) {
+  if (!Number.isFinite(value)) return null;
+  const rounded = Number(Number(value).toFixed(0));
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
 export function normalizeWeekly(payload, location, fetchedAt) {
   const h = payload.hourly || {}, d = payload.daily || {};
   const variables = { temperature:'temperature_2m', feelsLike:'apparent_temperature', humidity:'relative_humidity_2m', precipitation:'precipitation', probability:'precipitation_probability', windSpeed:'wind_speed_10m', gusts:'wind_gusts_10m', windDirection:'wind_direction_10m', code:'weather_code' };
-  const hourly = (h.time || []).map((time, i) => ({ time: `${time}:00+09:00`, ...Object.fromEntries(Object.entries(variables).map(([key, field]) => [key, numberOrNull(h[field]?.[i])])) }));
-  const daily = (d.time || []).slice(0,7).map((date, i) => ({ date, low:numberOrNull(d.temperature_2m_min?.[i]), high:numberOrNull(d.temperature_2m_max?.[i]), code:numberOrNull(d.weather_code?.[i]) }));
+  const hourly = (h.time || []).filter(time => typeof time === 'string' && time).map((time, i) => ({ time: `${time}:00+09:00`, ...Object.fromEntries(Object.entries(variables).map(([key, field]) => [key, strictNumberOrNull(h[field]?.[i])])) }));
+  const daily = (d.time || []).slice(0,7).filter(date => typeof date === 'string' && date).map((date, i) => ({ date, low:strictNumberOrNull(d.temperature_2m_min?.[i]), high:strictNumberOrNull(d.temperature_2m_max?.[i]), code:strictNumberOrNull(d.weather_code?.[i]) }));
   if (!hourly.length || !daily.length || !hourly.some(h => h.temperature != null)) throw new Error('주간 예보 자료가 없습니다.');
   return { location, hourly, daily, fetchedAt, expiresAt:new Date(Date.parse(fetchedAt)+30*60000).toISOString(), source:'Open-Meteo', timezone:'Asia/Seoul', units:{temperature:'°C', windSpeed:'m/s', precipitation:'mm'}, precipitationPeriod:'직전 1시간 누적' };
 }

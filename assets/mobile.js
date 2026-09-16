@@ -1,5 +1,6 @@
-import { ROUTES, locationKey } from './weather-domain.mjs';
+import { ROUTES, locationKey, hourlyTemperatureAt, roundTemperature } from './weather-domain.mjs';
 import { createExtras, storage, preferences, readForecastCache, writeForecastCache } from './mobile-extra.js';
+import { icon } from './ui-icons.mjs';
 
 
 // 이전 버전이 브라우저에 저장했던 비밀 키를 더 이상 사용하지 않고 제거합니다.
@@ -12,7 +13,8 @@ const state = {
   loading: true, analyzing: false, naverMap: null, naverSdkPromise: null,
   overlays: [], radarOverlay: null, radarFrames: [], radarFrameIndex: 0,
   radarPlaying: true, radarTimer: null, radarLoadToken: 0,
-  refreshController: null, refreshToken: 0, usingCachedData: false, contextLoading: false,
+  refreshController: null, contextController: null, analysisController: null, refreshToken: 0, analysisToken: 0,
+  usingCachedData: false, thermal: { locationKey: locationKey(preferences.location), status: "idle", data: null, error: null }, context: { locationKey: locationKey(preferences.location), status: "idle", cctvs: null, cctv: null, aviation: null, errors: [] }, cctvExpanded: false,
 };
 window.runCastMobileDebug = () => ({ hasNaverKey: Boolean(state.keys.naverKey), runtimeMode: state.runtime.mode, hasMap: Boolean(state.naverMap), view: state.view });
 
@@ -37,6 +39,13 @@ function formatDayTime(date) {
 function horizonLabel(minutes) {
   const fixed = ({ 0: "현재", 30: "+30분", 60: "+1시간", 180: "+3시간", 360: "+6시간", 540: "+9시간" })[minutes];
   if (fixed) return fixed;
+  const hours = Math.floor(minutes / 60), remainder = minutes % 60;
+  return remainder ? `+${hours}시간 ${remainder}분` : `+${hours}시간`;
+}
+
+function radarFrameLabel(minutes) {
+  if (minutes === 0) return "현재";
+  if (minutes < 60) return `+${minutes}분`;
   const hours = Math.floor(minutes / 60), remainder = minutes % 60;
   return remainder ? `+${hours}시간 ${remainder}분` : `+${hours}시간`;
 }
@@ -87,6 +96,17 @@ function modeAmountCopy(mode) {
   return `${mm.toFixed(mm % 1 ? 1 : 0)}mm 안팎`;
 }
 
+function thermalTemperature(mode, phase) {
+  const target = phase === "출발" ? mode?.departureAt : mode?.endAt;
+  const hourly = state.thermal?.locationKey === locationKey(state.location) ? state.thermal.data?.hourly : null;
+  return hourlyTemperatureAt(hourly, target);
+}
+
+function temperatureCopy(value) {
+  const temperature = roundTemperature(value);
+  return temperature == null ? "—" : `${temperature}°`;
+}
+
 function modePrimaryCopy(mode) {
   if (mode?.decision?.level === "unknown") return "예보 자료를 확인할 수 없어요";
   if (mode?.samples?.some(s => s.runAssessment?.snow)) return "눈·진눈깨비로 러닝을 미뤄요";
@@ -135,18 +155,52 @@ function dataQuality(data, item) {
 function completeMode(mode) {
   return mode?.decision?.level !== 'unknown' && mode?.samples?.length >= 3 && mode.samples.every(sample => !sample.unavailable && sample.runAssessment?.level !== 'unknown' && Number.isFinite(expectedMm(sample)));
 }
+
+function currentContext() {
+  return state.context?.locationKey === locationKey(state.location) ? state.context : null;
+}
+
+function currentCctvs() {
+  const cameras = currentContext()?.cctvs;
+  return Array.isArray(cameras) ? cameras : [];
+}
+
+function currentAviation() {
+  return currentContext()?.aviation || { metar: [], taf: [] };
+}
+
+function contextNeedsRefresh() {
+  const context=currentContext();
+  if (!context || context.status === "idle" || context.status === "error") return true;
+  if (context.status === "loading" || context.status === "refreshing") return false;
+  if (context.errors?.some(error=>String(error).startsWith("CCTV:"))) return true;
+  const usableUntil=Date.parse(context.cctv?.usableUntil || "");
+  return Number.isFinite(usableUntil) ? Date.now() >= usableUntil : false;
+}
+
+function decisionIcon(level) {
+  return level === "green" ? icon('check') : level === "yellow" || level === "red" ? icon('warning') : icon('question');
+}
+
 function renderDecision() {
   const data=state.data, mode=activeRunMode(); if(!data||!mode)return;
   const complete=completeMode(mode), decision=complete?mode.decision:{level:'unknown'};
-  const first=modePoint(mode,'출발');
-  const surface=surfaceInfo({surface:mode.summary?.surface},data.recentConditions,mode.immediate?data.cctvs:[]);
+  const surface=surfaceInfo({surface:mode.summary?.surface},data.recentConditions,mode.immediate?currentCctvs():[]);
   const expiredRun=Date.parse(mode.endAt)<Date.now();
   $('#decisionHero').className=`decision-hero ${decision.level}`;
+  $('#decisionStatusIcon').innerHTML=decisionIcon(decision.level);
   $('#decisionTitle').textContent=complete ? (expiredRun?'당시 눈·비 판단: '+modePrimaryCopy(mode):modePrimaryCopy(mode)):'예보가 부족해 판단을 보류해요';
   const departure=new Date(mode.departureAt), arrival=new Date(mode.endAt);
   $('#decisionWindow').textContent=`${expiredRun?'지난 예보 · ':''}${new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',month:'numeric',day:'numeric'}).format(departure)} ${formatDayTime(departure)}–${formatTime(arrival)} · 1시간`;
   const probability=mode.summary?.officialProbabilityMax, mm=mode.summary?.estimatedAmount;
-  $('#decisionReason').innerHTML=complete?`<div class="hero-metrics"><div><small>강수확률</small><b>${Number.isFinite(probability)?probability+'%':'—'}</b></div><div><small>예상 강수량</small><b>${Number.isFinite(mm)?Number(mm.toFixed(2))+'mm':'—'}</b></div></div><p class="surface-copy">노면 ${escapeHtml(surface.short)}${surface.observed?' · 실측':''}</p>`:'<p class="surface-copy">일부 시간의 자료가 없어 눈·비 판단을 제공하지 않습니다.</p>';
+  const departureTemperature=thermalTemperature(mode,"출발"), returnTemperature=thermalTemperature(mode,"복귀");
+  const hasTemperature=departureTemperature != null || returnTemperature != null;
+  const returnTemperatureCopy=returnTemperature == null ? "복귀 자료 없음" : `복귀 ${temperatureCopy(returnTemperature)}`;
+  const temperatureMetrics=`<div class="hero-metric hero-temperature"><small>출발 기온</small><b>${temperatureCopy(departureTemperature)}</b><span class="hero-metric-sub">${returnTemperatureCopy}</span></div>`;
+  const precipitationMetrics=`<div class="hero-metric"><small>강수확률</small><b>${complete&&Number.isFinite(probability)?probability+'%':'—'}</b></div><div class="hero-metric"><small>예상 강수량</small><b>${complete&&Number.isFinite(mm)?Number(mm.toFixed(2))+'mm':'—'}</b></div>`;
+  const surfaceWarning=["젖음 추정","CCTV 비 확인","CCTV 노면 젖음","CCTV 판단 어려움"].includes(surface.short) ? `<p class="surface-copy">노면 ${escapeHtml(surface.short)}${surface.observed?' · 실측':''}</p>` : "";
+  const metrics=(complete||hasTemperature)?`<div class="hero-metrics">${temperatureMetrics}${precipitationMetrics}</div>`:"";
+  $('#decisionReason').innerHTML=complete?`${metrics}${surfaceWarning}`:hasTemperature?`${metrics}<p class="surface-copy">일부 시간의 자료가 없어 눈·비 판단을 제공하지 않습니다.</p>`:'<p class="surface-copy">일부 시간의 자료가 없어 눈·비 판단을 제공하지 않습니다.</p>';
   $('#runMapCta').hidden=false;
   $('#runMapCta').onclick=()=>{state.mapHorizon=mode.withinMapHorizon?mode.mapHorizonMinutes:0;switchView('map');};
 }
@@ -170,24 +224,31 @@ function evidenceRows() {
   const first = modePoint(mode, "출발") || data.forecast.find((item) => item.minutes === 30) || data.forecast[0];
   const models = first?.multiModel;
   const recent = data.recentConditions;
-  const cameras = data.cctvs || [];
+  const cameras = currentCctvs();
   const analyzed = cameras.filter((camera) => ["yes", "no", "uncertain"].includes(camera.rainNow));
   const surface = surfaceInfo(mode?.summary ? { surface: mode.summary.surface } : first?.runAssessment, recent, mode?.immediate ? cameras : []);
-  const quality = dataQuality(data, first);
-  return [
-    { icon: "☂", title: "기상청 예보", copy: mode ? `강수확률 ${modeProbabilityCopy(mode)} · 1시간 예상 ${modeAmountCopy(mode)}` : `강수확률 ${probabilityCopy(first)} · 예상 ${rainAmountCopy(first)}`, status: mode?.decision?.level === "unknown" ? "자료 없음" : "확인", warn: mode?.decision?.level === "red" || first?.runAssessment?.level === "avoid" },
-    { icon: "≋", title: "최근 비와 노면", copy: recent ? `최근 3시간 ${recent.recentTotalMm}mm · ${surface.detail}` : "최근 강수 자료를 확인하지 못했어요", status: surface.observed ? "관측" : "추정", warn: !recent || first?.runAssessment?.surface !== "dry" },
-    { icon: "◇", title: "다른 예보", copy: models ? `${models.availableModels || 0}개 예보 중 ${models.wetVotes || 0}개가 비를 예상해요 · ${quality.detail}` : "다른 예보 자료를 확인하지 못했어요", status: quality.label.replace("자료 일치도 ", ""), warn: quality.label.endsWith("낮음") },
-    { icon: "◎", title: "비구름 영상", copy: data.radar?.configured ? "지도에서 비구름의 예상 이동을 직접 볼 수 있어요" : "강수 영상은 현재 연결되지 않았어요", status: data.radar?.configured ? "확인 가능" : "제외", warn: !data.radar?.configured },
-    { icon: "▣", title: "방향별 CCTV", copy: analyzed.length ? `${analyzed.length}곳 분석 완료 · ${surface.detail}` : cameras.length ? `${cameras.length}개 영상이 있지만 아직 분석하지 않았어요 · 판단에는 반영하지 않아요` : "CCTV 목록이 없어 판단에서 제외했어요", status: analyzed.length ? "관측" : "미확인", warn: false },
-  ];
+  return { data, mode, first, models, recent, surface, cameras, analyzed };
 }
 
 function renderEvidence() {
-  const rows=evidenceRows();
-  const rowHtml=row=>`<div class="evidence-item"><div><b>${escapeHtml(row.title)}</b><small>${escapeHtml(row.copy)}</small></div></div>`;
-  $('#evidenceSummary').innerHTML=rows.slice(0,3).map(rowHtml).join('');
-  $('#evidenceDetail').innerHTML=rows.map(rowHtml).join('');
+  const { mode, first, models, recent, surface }=evidenceRows();
+  const recentCopy=recent ? `최근 3시간 ${recent.recentTotalMm}mm · ${surface.short}` : "최근 강수 자료가 없어 노면을 추정하지 못했어요";
+  const modelsCopy=models?.availableModels
+    ? `출발 무렵 ${models.availableModels}개 중 ${models.wetVotes || 0}개가 비를 예상해요`
+    : "다른 예보 자료 없음";
+  $('#evidenceSummary').innerHTML=`<div class="evidence-item"><b>노면</b><small>${escapeHtml(recentCopy)}</small></div><div class="evidence-item"><b>다른 예보</b><small>${escapeHtml(modelsCopy)}</small></div>`;
+  const officialSource=first?.sourceLabel || "기상청 예보 자료 없음";
+  const issuedAt=first?.issuedAt, targetAt=first?.sourceTime;
+  const officialDetail=[officialSource,issuedAt?`발표 ${extras.stamp(issuedAt)}`:null,targetAt?`대상 ${extras.stamp(targetAt)}`:null].filter(Boolean).join(" · ");
+  const modelDetail=[models?.validAt?`대상 ${escapeHtml(extras.stamp(models.validAt))}`:null,(models?.models || []).map(model=>`${escapeHtml(model.label)}: ${Number.isFinite(model.probability)?`${model.probability}%`:"확률 자료 없음"} · ${Number.isFinite(model.amount)?`${Number(model.amount.toFixed(2))}mm`:"강수량 자료 없음"}`).join("<br>")].filter(Boolean).join("<br>") || "비교 가능한 다른 예보 자료가 없어요.";
+  const thermal=state.thermal?.locationKey===locationKey(state.location)?state.thermal:null;
+  const thermalSource=thermal?.data?.source||"Open-Meteo";
+  const thermalDetail=thermal?.data?.fetchedAt
+    ? `${thermalSource} · 수집 ${extras.stamp(thermal.data.fetchedAt)} · 대상 시각의 정시 hourly 값`
+    : thermal?.status==='loading' ? "Open-Meteo · 기온 자료를 불러오는 중"
+    : "Open-Meteo · 기온 자료 없음";
+  const surfaceDetail=recent ? `최근 강수와 시간대 예보를 바탕으로 노면을 추정합니다. CCTV 원본 링크는 현재 현장을 직접 확인하는 용도이며, 아직 분석하지 않은 영상은 판단에 반영하지 않습니다.` : "최근 강수 자료가 없어 노면 상태를 추정하지 않습니다.";
+  $('#evidenceDetail').innerHTML=`<div class="detail-fact"><b>눈·비: 기상청</b><span>${escapeHtml(officialDetail)}</span></div><div class="detail-fact"><b>기온: ${escapeHtml(thermalSource)}</b><span>${escapeHtml(thermalDetail)}</span></div><div class="detail-fact"><b>모델별 출발 무렵</b><span>${modelDetail}</span></div><div class="detail-fact"><b>노면 추정</b><span>${escapeHtml(surfaceDetail)}</span></div><p class="detail-note">기온은 출발·복귀 정시의 hourly 예보를 사용하고 정시 사이의 기온은 해당 시간대 예보입니다. 강수확률은 러닝 구간 최대값, 강수량은 1시간 예상 누적량입니다. 눈·비 판정은 기상청, 기온·체감·옷차림은 Open-Meteo 자료를 사용합니다.</p>`;
 }
 
 function cctvStatus(camera) {
@@ -198,16 +259,32 @@ function cctvStatus(camera) {
 }
 
 function renderCctv() {
-  const cameras = state.data?.cctvs || [];
-  $("#cctvCount").textContent = `${cameras.length}곳`;
-  $("#cctvRail").innerHTML = cameras.length ? cameras.slice(0, 8).map((camera) => {
-    const [klass, status] = cctvStatus(camera);
-    return `<a class="cctv-card" href="${escapeHtml(camera.url || "#")}" target="_blank" rel="noopener noreferrer">
-      <header><span>${escapeHtml(camera.sector)} 방향</span><span>${camera.distance ? `${camera.distance}km` : ""}</span></header>
-      <h3>${escapeHtml(camera.name)}</h3><p>${escapeHtml(camera.rainNow === "unknown" ? status : (camera.evidence || status))}</p>
-      <footer><span>원본 영상 직접 보기 ↗</span><i class="${klass}"></i></footer>
-    </a>`;
-  }).join("") : `<div class="empty-card">주변 CCTV 없음</div>`;
+  const focusedCctvId=document.activeElement?.closest?.(".cctv-card")?.dataset.cctvId || null;
+  const context=currentContext(), cameras=currentCctvs().slice().sort((a,b)=>(a.distance??Infinity)-(b.distance??Infinity)||String(a.id).localeCompare(String(b.id)));
+  const cctvFailure=Boolean(context?.errors?.some(error=>String(error).startsWith("CCTV:")));
+  const rail=$("#cctvRail"), more=$("#moreCctv");
+  if(context?.status === "loading") {
+    rail.innerHTML='<div class="cctv-state"><span class="loading-orbit"></span><span>CCTV를 불러오고 있어요</span></div>';
+    more.hidden=true;
+  } else if(cctvFailure || context?.status === "error") {
+    rail.innerHTML='<div class="cctv-state">CCTV를 불러오지 못했어요 <button id="retryCctv">다시 시도</button></div>';
+    more.hidden=true;
+    $('#retryCctv')?.addEventListener('click',()=>void refreshContext());
+  } else if(!context?.cctv?.configured) {
+    rail.innerHTML='<div class="cctv-state">CCTV 연결이 설정되지 않았어요</div>';
+    more.hidden=true;
+  } else if(!cameras.length) {
+    rail.innerHTML='<div class="cctv-state">이 위치 주변에서 제공되는 CCTV가 없어요</div>';
+    more.hidden=true;
+  } else {
+    const shown=state.cctvExpanded?cameras:cameras.slice(0,2);
+    rail.innerHTML=shown.map(camera=>`<a class="cctv-card" data-cctv-id="${escapeHtml(camera.id)}" href="${escapeHtml(camera.url)}" target="_blank" rel="noopener noreferrer"><span><b>${icon('camera')} ${escapeHtml(camera.name)}</b><small>${escapeHtml(camera.sector)} 방향 · ${Number.isFinite(camera.distance)?`${camera.distance}km`:"거리 정보 없음"}</small></span><strong>${icon('external')}<span>영상</span></strong></a>`).join("")+(context?.cctv?.stale?'<p class="cctv-cache-note">최근 응답을 표시하고 있어요</p>':"");
+    const remaining=Math.max(0,cameras.length-2);
+    more.hidden=!remaining;
+    more.innerHTML=state.cctvExpanded?`접기 ${icon('chevron')}`:`나머지 ${remaining}곳 보기 ${icon('chevron')}`;
+    more.setAttribute('aria-expanded',String(state.cctvExpanded));
+    more.onclick=()=>{state.cctvExpanded=!state.cctvExpanded;renderCctv();};
+  }
 
   const realStill = cameras.some((camera) => camera.url && (camera.cctvType === "3" || String(camera.format).toLowerCase().includes("jpg")));
   const publicMode = state.runtime.mode === "public" || state.runtime.aiEnabled === false;
@@ -215,15 +292,15 @@ function renderCctv() {
   if (publicMode) blockers.push("공개 배포에서는 AI 분석 비활성화");
   else if (!state.codex?.codex) blockers.push("로컬 Codex CLI 미연결");
   if (!publicMode && !realStill) blockers.push("분석 가능한 정지영상 없음");
-  $("#analyzeBtn").hidden = publicMode;
+  $("#analyzeBtn").hidden = publicMode || !realStill;
+  $("#analysisHint").hidden = publicMode || !realStill;
   $("#analyzeBtn").disabled = blockers.length > 0 || state.analyzing;
-  $("#analysisHint").textContent = publicMode
-    ? "자동 확인은 내 컴퓨터에서만 사용할 수 있어요. 영상은 카드에서 직접 열어볼 수 있어요."
-    : blockers.length ? blockers.join(" · ") : "로컬에서만 사용 · 15초 간격 이미지 2장으로 현재 비와 노면을 확인해요.";
+  $("#analysisHint").textContent = blockers.length ? blockers.join(" · ") : "로컬에서만 사용 · 15초 간격 이미지 2장으로 현재 비와 노면을 확인해요.";
+  if (focusedCctvId) [...document.querySelectorAll(".cctv-card")].find(link=>link.dataset.cctvId === focusedCctvId)?.focus({ preventScroll:true });
 }
 
 function renderAviation() {
-  const aviation = state.data?.aviation || { metar: [], taf: [] };
+  const aviation = currentAviation();
   const rows = [];
   for (const item of aviation.metar || []) rows.push(`<div class="aviation-block"><b>${escapeHtml(item.label || item.id)} · 현재 관측</b><small>${escapeHtml(item.role || "")}</small><code>METAR ${escapeHtml(item.id)}<br>${escapeHtml(item.raw || "자료 없음")}</code></div>`);
   for (const item of aviation.taf || []) rows.push(`<div class="aviation-block"><b>${escapeHtml(item.label || item.id)} · 단시간 예보</b><small>${escapeHtml(item.role || "")}</small><code>TAF ${escapeHtml(item.id)}<br>${escapeHtml(item.raw || "자료 없음")}</code></div>`);
@@ -260,23 +337,39 @@ function render() {
     $('#retryDecision')?.addEventListener('click',()=>refreshData(true));
   }
   const date=data?.dataUpdatedAt;
-  $('#decisionStamp').textContent=usable&&date?`기상청 중심 · ${extras.stamp(date)} 업데이트`:'';
+  const thermal=state.thermal?.locationKey===locationKey(state.location)?state.thermal:null;
+  const rainStamp=date?`눈·비 ${extras.stamp(date)}`:'눈·비 자료 없음';
+  const thermalStamp=thermal?.data?.fetchedAt?`기온 ${extras.stamp(thermal.data.fetchedAt)}`:thermal?.status==='loading'?'기온 불러오는 중':'기온 자료 없음';
+  $('#decisionStamp').textContent=usable?`${rainStamp} · ${thermalStamp}`:'';
   $('#mapStamp').textContent=date?`기상청 수치예보 · ${extras.stamp(date)} 업데이트`:'';
   if(data){renderDepartureModes();renderDecision();renderTimeline();renderEvidence();renderMapSummary();}
   renderCctv();renderAviation();if(state.naverMap)drawMapOverlays();
 }
 
-async function loadMobileContext(token, controller) {
-  state.contextLoading = true;
+async function loadMobileContext(token, location, controller) {
+  const requestLocationKey=locationKey(location);
   try {
-    const response = await fetch("/api/mobile-context", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: state.location }), signal: controller.signal });
+    const response = await fetch("/api/mobile-context", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location }), signal: controller.signal });
     const context = await response.json();
     if (!response.ok) throw new Error(context.error || "CCTV 자료 요청 실패");
-    if (token !== state.refreshToken || controller.signal.aborted || !state.data) return;
-    state.data = { ...state.data, cctvs: context.cctvs, cctv: context.cctv, aviation: context.aviation };
+    if (token !== state.refreshToken || controller.signal.aborted || requestLocationKey !== locationKey(state.location)) return;
+    state.context = { locationKey: requestLocationKey, status: "ready", cctvs: Array.isArray(context.cctvs) ? context.cctvs : [], cctv: context.cctv || null, aviation: context.aviation || { metar: [], taf: [] }, errors: context.errors || [] };
     render();
-  } catch (error) { /* Context failure leaves existing evidence intact. */ }
-  finally { if (token === state.refreshToken) state.contextLoading = false; }
+  } catch (error) {
+    if (error.name === "AbortError" || token !== state.refreshToken || requestLocationKey !== locationKey(state.location)) return;
+    state.context = { locationKey: requestLocationKey, status: "error", cctvs: [], cctv: null, aviation: { metar: [], taf: [] }, errors: [`CCTV: ${error.message || "조회 실패"}`] };
+    render();
+  }
+}
+
+function refreshContext() {
+  state.contextController?.abort();
+  const controller=new AbortController(), location={...state.location}, key=locationKey(location);
+  const previous=currentContext(), keepList=previous?.status === "ready" && Array.isArray(previous.cctvs) && !contextNeedsRefresh();
+  state.contextController=controller;
+  state.context=keepList ? { ...previous, status:"refreshing", errors:[] } : { locationKey:key, status:"loading", cctvs:null, cctv:null, aviation:null, errors:[] };
+  if (!keepList) render();
+  return loadMobileContext(state.refreshToken, location, controller);
 }
 
 async function refreshData(force = true) {
@@ -286,9 +379,11 @@ async function refreshData(force = true) {
   const token = ++state.refreshToken;
   const pointKey = locationKey(state.location);
   const cached = readForecastCache('core', pointKey);
+  void extras.loadWeekly(force);
+  void refreshContext();
   if (!state.data && cached) { state.data = cached; state.usingCachedData = true; render(); }
-  if (!force && cached && Date.now() < Date.parse(cached.expiresAt)) { state.loading = false; $("#refreshBtn").disabled = false;  render(); void loadMobileContext(token, controller); return; }
-  state.loading = true; state.contextLoading = false;
+  if (!force && cached && Date.now() < Date.parse(cached.expiresAt)) { state.loading = false; $("#refreshBtn").disabled = false;  render(); return; }
+  state.loading = true;
   $("#refreshBtn").disabled = true;  render();
   try {
     const response = await fetch("/api/mobile-forecast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: state.location }), signal: controller.signal });
@@ -305,7 +400,6 @@ async function refreshData(force = true) {
     }
     render();
     if (state.view === "map") void startRadarSequence();
-    void loadMobileContext(token, controller);
   } catch (error) {
     if (error.name !== "AbortError" && token === state.refreshToken) {
       state.usingCachedData = Boolean(state.data);
@@ -318,14 +412,22 @@ async function refreshData(force = true) {
 function resetDecision() { render(); $('#mapHorizons').replaceChildren(); $('#mapSelected').textContent='현재 기준'; }
 
 const extras = createExtras(state, { toast, switchView, loadNaverSdk, openSheet, setBusy,
+  setThermal(snapshot) {
+    if (!snapshot || snapshot.key !== locationKey(state.location)) return;
+    state.thermal={locationKey:snapshot.key,status:snapshot.status,data:snapshot.data||null,error:snapshot.error||null};
+    render();
+  },
   resetNaverSdk(){state.naverSdkPromise=null;},
   async changeLocation(point) {
-    state.refreshController?.abort();++state.refreshToken;
-    state.location=point;state.route=point.id;state.data=null;state.usingCachedData=false;
+    state.refreshController?.abort();state.contextController?.abort();state.analysisController?.abort();++state.refreshToken;++state.analysisToken;
+    state.location=point;state.route=point.id;state.data=null;state.usingCachedData=false;state.cctvExpanded=false;state.analyzing=false;
+    state.thermal={locationKey:locationKey(point),status:"idle",data:null,error:null};
+    state.context={ locationKey:locationKey(point), status:"idle", cctvs:null, cctv:null, aviation:null, errors:[] };
     clearMapOverlays();state.radarOverlay?.setMap(null);++state.radarLoadToken;
     state.radarFrames=[];$('#mapStamp').textContent='';
     if(state.naverMap)state.naverMap.panTo(new naver.maps.LatLng(point.lat,point.lon));
-    if(state.view==='weekly'){render();return;}
+    void extras.loadWeekly(false);
+    if(state.view==='weekly'){render();void refreshContext();return;}
     await refreshData(false);
   }
 });
@@ -348,8 +450,8 @@ async function switchView(view) {
   $$('.mobile-view').forEach(section=>section.classList.toggle('active',section.dataset.view===view));
   $$('.bottom-nav button').forEach(button=>{button.classList.toggle('active',button.dataset.tab===view);if(button.dataset.tab===view)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');});
   window.scrollTo({top:viewScroll[view]||0,behavior:'auto'});
-  if(view==='weekly'){void extras.loadWeekly();extras.syncBusy();}
-  else {render();if(!state.loading&&(!state.data||Date.now()>=Date.parse(state.data.expiresAt)))void refreshData(false);}
+  if(view==='weekly'){extras.render();void extras.loadWeekly();extras.syncBusy();}
+  else {render();if(!state.loading&&(!state.data||Date.now()>=Date.parse(state.data.expiresAt)))void refreshData(false);if(view==='decision'&&contextNeedsRefresh())void refreshContext();}
   if(view==='map'){await ensureMap();if(state.naverMap){naver.maps.Event.trigger(state.naverMap,'resize');drawMapOverlays();}await startRadarSequence();}
   else {clearInterval(state.radarTimer);state.radarTimer=null;}
 }
@@ -395,10 +497,9 @@ function drawMapOverlays() {
   if (!state.naverMap || !state.data) return;
   clearMapOverlays();
   const route = state.location;
-  state.naverMap.panTo(new naver.maps.LatLng(route.lat, route.lon));
-  state.overlays.push(new naver.maps.Marker({ map: state.naverMap, position: new naver.maps.LatLng(route.lat, route.lon), icon: { content: `<div class="naver-marker-mobile route">RUN</div>`, anchor: new naver.maps.Point(22, 16) } }));
-  for (const camera of state.data.cctvs || []) {
-    state.overlays.push(new naver.maps.Marker({ map: state.naverMap, position: new naver.maps.LatLng(camera.lat, camera.lon), title: camera.name, icon: { content: `<div class="naver-marker-mobile">${escapeHtml(camera.sector)}</div>`, anchor: new naver.maps.Point(18, 16) } }));
+  state.overlays.push(new naver.maps.Marker({ map: state.naverMap, position: new naver.maps.LatLng(route.lat, route.lon), icon: { content: `<div class="naver-marker-mobile route">${icon('running')}</div>`, anchor: new naver.maps.Point(22, 16) } }));
+  for (const camera of currentCctvs()) {
+    state.overlays.push(new naver.maps.Marker({ map: state.naverMap, position: new naver.maps.LatLng(camera.lat, camera.lon), title: camera.name, icon: { content: `<div class="naver-marker-mobile cctv">${icon('camera')}<span class="sr-only">${escapeHtml(camera.sector)} CCTV</span></div>`, anchor: new naver.maps.Point(18, 16) } }));
   }
 }
 
@@ -486,20 +587,50 @@ function createRadarOverlay(map) {
 
 function showRadarFrame(index) {
   if (!state.radarFrames.length || !state.naverMap) return;
-  state.radarFrameIndex = index % state.radarFrames.length;
+  state.radarFrameIndex = ((index % state.radarFrames.length) + state.radarFrames.length) % state.radarFrames.length;
   const frame = state.radarFrames[state.radarFrameIndex];
-  $("#radarFrameLabel").textContent = `T+${String(frame.minutes).padStart(2, "0")}m`;
-  $$("#radarDots button").forEach((dot, dotIndex) => dot.classList.toggle("active", dotIndex === state.radarFrameIndex));
-  if (!frame.surface) return;
+  const label = radarFrameLabel(frame.minutes);
+  $("#radarFrameLabel").textContent = label;
+  $$("#radarDots button").forEach((dot, dotIndex) => {
+    const active = dotIndex === state.radarFrameIndex;
+    dot.classList.toggle("active", active);
+    dot.setAttribute("aria-current", active ? "true" : "false");
+  });
+  if (frame.status === "error") {
+    $("#radarState").textContent = "영상 오류";
+    state.radarOverlay?.setMap(null);
+    return;
+  }
+  if (!frame.surface) {
+    $("#radarState").textContent = "불러오는 중";
+    state.radarOverlay?.setMap(null);
+    return;
+  }
+  $("#radarState").textContent = state.radarFrames.some((candidate) => candidate.status === "error") ? "일부 프레임 오류" : "재생";
   if (!state.radarOverlay) state.radarOverlay = createRadarOverlay(state.naverMap);
   else if (!state.radarOverlay.getMap()) state.radarOverlay.setMap(state.naverMap);
   state.radarOverlay.setFrame(frame.surface);
 }
 
+function nextLoadedRadarIndex(start = state.radarFrameIndex) {
+  for (let offset = 1; offset <= state.radarFrames.length; offset += 1) {
+    const index = (start + offset) % state.radarFrames.length;
+    if (state.radarFrames[index]?.surface) return index;
+  }
+  return start;
+}
+
 function syncRadarTimer() {
   clearInterval(state.radarTimer); state.radarTimer = null;
-  $("#radarPlay").textContent = state.radarPlaying ? "Ⅱ" : "▶";
-  if (state.radarPlaying && state.view === "map" && state.radarFrames.some((frame) => frame.surface)) state.radarTimer = setInterval(() => showRadarFrame((state.radarFrameIndex + 1) % state.radarFrames.length), 1200);
+  const play = $("#radarPlay");
+  const hasLoadedFrame = state.radarFrames.some((frame) => frame.surface);
+  const allFramesFailed = state.radarFrames.length > 0 && state.radarFrames.every((frame) => frame.status === "error");
+  if (allFramesFailed) state.radarPlaying = false;
+  play.disabled = allFramesFailed;
+  play.innerHTML = icon(state.radarPlaying ? "pause" : "play");
+  play.setAttribute("aria-label", allFramesFailed ? "강수 영상 재생 불가" : state.radarPlaying ? "강수 영상 일시정지" : "강수 영상 재생");
+  play.setAttribute("aria-pressed", String(state.radarPlaying));
+  if (state.radarPlaying && state.view === "map" && hasLoadedFrame) state.radarTimer = setInterval(() => showRadarFrame(nextLoadedRadarIndex()), 1200);
 }
 
 async function startRadarSequence() {
@@ -511,34 +642,71 @@ async function startRadarSequence() {
   const blended = state.mapHorizon > 60;
   $("#radarProduct").textContent = state.mapHorizon === 0 ? "현재 관측 강수" : blended ? "기상청 강수 예측" : "단기 비구름 이동 예측";
   $("#radarState").textContent = "불러오는 중";
+  $("#radarPlay").disabled = false;
+  state.radarOverlay?.setMap(null);
   const token = ++state.radarLoadToken;
-  state.radarFrames = radarMinutes().map((minutes) => ({ minutes, surface: null })); state.radarFrameIndex = 0;
-  $("#radarDots").innerHTML = state.radarFrames.map((_, index) => `<button data-radar-index="${index}" aria-label="레이더 프레임 ${index + 1}"></button>`).join("");
+  state.radarFrames = radarMinutes().map((minutes) => ({ minutes, surface: null, status: "loading" })); state.radarFrameIndex = 0;
+  $("#radarDots").innerHTML = state.radarFrames.map((frame, index) => `<button data-radar-index="${index}" aria-label="레이더 프레임 ${radarFrameLabel(frame.minutes)} 불러오는 중" aria-current="${index === 0 ? "true" : "false"}"><span>${radarFrameLabel(frame.minutes)}</span></button>`).join("");
   $$("#radarDots button").forEach((button) => button.onclick = () => { showRadarFrame(Number(button.dataset.radarIndex)); syncRadarTimer(); });
   await Promise.all(state.radarFrames.map(async (frame, index) => {
-    try { frame.surface = await transparentRadarFrame(frame.minutes); if (token === state.radarLoadToken) { $$("#radarDots button")[index]?.classList.add("loaded"); if (index === 0) showRadarFrame(0); } }
-    catch (error) { if (token === state.radarLoadToken) console.warn(error); }
+    try {
+      frame.surface = await transparentRadarFrame(frame.minutes); frame.status = "ready";
+      if (token === state.radarLoadToken) {
+        const button = $$("#radarDots button")[index];
+        button?.classList.add("loaded");
+        button?.setAttribute("aria-label", `레이더 프레임 ${radarFrameLabel(frame.minutes)} 준비됨`);
+        if (index === 0 || state.radarFrameIndex === index) showRadarFrame(state.radarFrameIndex);
+      }
+    } catch (error) {
+      frame.status = "error";
+      if (token === state.radarLoadToken) {
+        const button = $$("#radarDots button")[index];
+        button?.classList.add("failed");
+        button?.setAttribute("aria-label", `레이더 프레임 ${radarFrameLabel(frame.minutes)} 오류`);
+        if (state.radarFrameIndex === index) showRadarFrame(index);
+        console.warn(error);
+      }
+    }
   }));
   if (token !== state.radarLoadToken) return;
-  $("#radarState").textContent = state.radarFrames.some((frame) => frame.surface) ? "재생" : "오류";
-  showRadarFrame(0); syncRadarTimer();
+  const loaded = state.radarFrames.filter((frame) => frame.surface).length;
+  $("#radarState").textContent = loaded === state.radarFrames.length ? "재생" : loaded ? "일부 프레임 오류" : "영상 오류";
+  const firstLoaded = state.radarFrames.findIndex((frame) => frame.surface);
+  if (firstLoaded >= 0) showRadarFrame(state.radarFrames[state.radarFrameIndex]?.surface ? state.radarFrameIndex : firstLoaded);
+  else state.radarOverlay?.setMap(null);
+  syncRadarTimer();
 }
 
 async function analyzeCctv() {
-  if (state.analyzing || !state.data) return;
+  const cameras=currentCctvs();
+  if (state.analyzing || !state.data || !cameras.length) return;
   if (state.runtime.mode === "public" || state.runtime.aiEnabled === false) return toast("노면 CCTV AI 분석은 로컬에서만 사용할 수 있습니다.");
+  const locationAtRequest=locationKey(state.location), refreshAtRequest=state.refreshToken, analysisAtRequest=++state.analysisToken;
+  const controller=new AbortController();state.analysisController=controller;
   state.analyzing = true; $("#analyzeBtn").disabled = true; $("#analyzeBtn").textContent = "CCTV 영상 확인 중";
   try {
-    const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cctvs: state.data.cctvs, forecast: state.data.forecast }) });
+    const response = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cctvs: cameras, forecast: state.data.forecast }), signal: controller.signal });
     const payload = await response.json(); if (!response.ok) throw new Error(payload.error || "분석 실패");
+    if (analysisAtRequest !== state.analysisToken || refreshAtRequest !== state.refreshToken || locationAtRequest !== locationKey(state.location) || currentContext()?.locationKey !== locationAtRequest) return;
     const analyzed = new Map(payload.cameras.map((camera) => [camera.id, camera]));
-    state.data.cctvs = state.data.cctvs.map((camera) => analyzed.get(camera.id) || camera);
+    state.context = { ...state.context, cctvs: cameras.map((camera) => analyzed.get(camera.id) || camera) };
     state.data.decision = payload.decision;
     const nowMode = state.data.runModes?.find((mode) => mode.id === "now");
     if (nowMode) nowMode.decision = payload.decision;
     render(); toast(payload.summary || "노면 CCTV 분석을 마쳤습니다.");
-  } catch (error) { toast(error.message); }
-  finally { state.analyzing = false; $("#analyzeBtn").textContent = "CCTV로 비·노면 확인"; renderCctv(); }
+  } catch (error) { if(error.name !== "AbortError" && analysisAtRequest === state.analysisToken) toast(error.message); }
+  finally { if(analysisAtRequest === state.analysisToken){state.analyzing = false; $("#analyzeBtn").textContent = "CCTV로 비·노면 확인"; renderCctv();} }
+}
+
+function scrollToCctv() {
+  if(contextNeedsRefresh()) void refreshContext();
+  const reveal=()=>{
+    const section=$("#cctvSection");
+    section.scrollIntoView({ block:"start", behavior:window.matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth" });
+    section.focus({ preventScroll:true });
+  };
+  if(state.view === "decision") reveal();
+  else void switchView("decision").then(()=>requestAnimationFrame(reveal));
 }
 
 let activeSheet=null, pendingSheetPop=null, resolveSheetPop=null;
@@ -546,7 +714,7 @@ const silentSheetCloses=new WeakSet(), sheetFocus=new WeakMap();
 async function openSheet(dialog) {
   if(pendingSheetPop)await pendingSheetPop;
   if(dialog.open)return;
-  const returnTo=dialog.id==='cctvSheet'?$('#openCctv'):document.activeElement;
+  const returnTo=document.activeElement;
   sheetFocus.set(dialog,returnTo);
   if(activeSheet?.open){silentSheetCloses.add(activeSheet);activeSheet.close();history.replaceState({runcastSheet:dialog.id},'');}
   else history.pushState({runcastSheet:dialog.id},'');
@@ -579,14 +747,15 @@ async function boot() {
   $$(".bottom-nav button").forEach((button) => button.onclick = () => switchView(button.dataset.tab));
   $$('[data-open-view]').forEach((button) => button.onclick = () => switchView(button.dataset.openView));
   extras.boot();
+  // Thermal/weekly uses its own Open-Meteo request and must not delay KMA core.
+  void extras.loadWeekly(false);
   resetDecision();
   $("#refreshBtn").onclick = () => state.view === "weekly" ? extras.loadWeekly(true) : state.view === "map" ? refreshMap() : refreshData(true); $("#radarPlay").onclick = () => { state.radarPlaying = !state.radarPlaying; syncRadarTimer(); };
   $("#analyzeBtn").onclick = analyzeCctv; $("#settingsBtn").onclick = openSettings; $("#closeSettings").onclick = closeSettings;
   $('#moreBtn').onclick=()=>{const hidden=!$('#moreMenu').hidden;$('#moreMenu').hidden=hidden;$('#moreBtn').setAttribute('aria-expanded',String(!hidden));};
   $('#settingsBtn').onclick=()=>{$('#moreMenu').hidden=true;$('#moreBtn').setAttribute('aria-expanded','false');openSettings();};
-  $('#openEvidence').onclick=()=>openSheet($('#evidenceSheet'));
-  $('#openCctv').onclick=()=>openSheet($('#cctvSheet'));
-  $('#evidenceCctv').onclick=async()=>{await switchView('map');await openSheet($('#cctvSheet'));};
+  $('#jumpCctv').onclick=scrollToCctv;
+  $('#openCctv').onclick=scrollToCctv;
   $$('[data-close-sheet]').forEach(button=>button.onclick=()=>button.closest('dialog').close());
   $$('dialog').forEach(dialog=>dialog.addEventListener('click',event=>{if(event.target===dialog){const bounds=dialog.getBoundingClientRect();if(event.clientY<bounds.top||event.clientX<bounds.left||event.clientX>bounds.right)dialog.close();}}));
   document.addEventListener('keydown',event=>{if(event.key==='Escape'){$('#moreMenu').hidden=true;$('#moreBtn').setAttribute('aria-expanded','false');}});
@@ -596,8 +765,10 @@ async function boot() {
     state.keys = { naverKey: config.keys?.naverKey || "" };
     state.configured = config.configured || {};
     renderConnectionStatus();
-    if (state.runtime.mode === "public") $("#settingsIntro").textContent = "공개 배포 모드입니다. 비밀 키와 AI 기능은 서버 안에서만 관리됩니다.";
-  } catch { renderConnectionStatus(); }
+    $("#settingsIntro").textContent = state.runtime.mode === "public"
+      ? "공개 배포 모드입니다. 비밀 키와 AI 기능은 서버 안에서만 관리됩니다."
+      : "로컬 테스트는 프로젝트의 .env.local에 키를 입력한 뒤 서버를 재시작하세요. .env와 실행 환경변수도 지원합니다.";
+  } catch { $("#settingsIntro").textContent = "로컬 서버의 연결 설정을 확인하지 못했어요. 서버 실행 상태를 확인해 주세요."; renderConnectionStatus(); }
   try {
     state.codex = await fetch("/api/status").then((response) => response.json());
     if (state.codex.runtimeMode) state.runtime = { ...state.runtime, mode: state.codex.runtimeMode, aiEnabled: state.codex.aiEnabled };
@@ -605,8 +776,9 @@ async function boot() {
   await refreshData(false);
   const refreshVisible = () => {
     if (document.visibilityState !== 'visible') return;
-    if (state.view === 'weekly') { extras.loadWeekly(); return; }
-    if (!state.loading && (!state.data || Date.now() >= Date.parse(state.data.expiresAt || 0))) void refreshData(false);
+    if (state.view === 'weekly') extras.loadWeekly();
+    else if (!state.loading && (!state.data || Date.now() >= Date.parse(state.data.expiresAt || 0))) void refreshData(false);
+    if (contextNeedsRefresh()) void refreshContext();
   };
   document.addEventListener('visibilitychange', refreshVisible);
   window.addEventListener('online', refreshVisible);

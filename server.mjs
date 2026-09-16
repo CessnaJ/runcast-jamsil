@@ -46,20 +46,31 @@ function parseEnvFile(source) {
   return values;
 }
 
-async function loadLocalKeys() {
+export async function loadLocalKeys(root = ROOT, environment = process.env) {
   let fileValues = {};
-  try { fileValues = parseEnvFile(await readFile(join(ROOT, ".env.local"), "utf8")); }
-  catch { /* .env.local은 선택 사항입니다. */ }
+  // 로컬 테스트: .env < .env.local < 실행 환경변수 순서로 적용합니다.
+  // Vercel 배포는 프로젝트에 설정한 환경변수만 사용합니다.
+  if (!environment.VERCEL) {
+    for (const filename of [".env", ".env.local"]) {
+      try {
+        const parsed = parseEnvFile(await readFile(join(root, filename), "utf8"));
+        Object.assign(fileValues, Object.fromEntries(Object.entries(parsed).filter(([, value]) => value.trim())));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+  }
+  const key = name => String(environment[name] || "").trim() || String(fileValues[name] || "").trim();
   return {
-    naverKey: process.env.NAVER_MAP_CLIENT_ID || fileValues.NAVER_MAP_CLIENT_ID || "",
-    kmaServiceKey: process.env.KMA_SERVICE_KEY || fileValues.KMA_SERVICE_KEY || "",
-    kmaHubKey: process.env.KMA_HUB_KEY || fileValues.KMA_HUB_KEY || "",
-    itsApiKey: process.env.ITS_API_KEY || fileValues.ITS_API_KEY || "",
+    naverKey: key("NAVER_MAP_CLIENT_ID"),
+    kmaServiceKey: key("KMA_SERVICE_KEY"),
+    kmaHubKey: key("KMA_HUB_KEY"),
+    itsApiKey: key("ITS_API_KEY"),
   };
 }
 
 function effectiveKeys() {
-  // 비밀 키는 서버 환경변수/.env.local에서만 읽습니다.
+  // 비밀 키는 실행 환경변수 또는 로컬 .env/.env.local에서 읽습니다.
   // 브라우저가 보낸 값은 로컬 모드에서도 신뢰하거나 사용하지 않습니다.
   return Object.fromEntries(Object.keys(LOCAL_KEYS).map((name) => [name, String(LOCAL_KEYS[name] || "").trim()]));
 }
@@ -794,13 +805,42 @@ function haversine(lat1, lon1, lat2, lon2) {
 }
 
 function chooseDirectionalCctv(cameras) {
-  const sectors = ["남", "남서", "서", "북서", "북", "북동", "동", "남동"];
-  const picks = [];
-  for (const sector of sectors) {
-    const camera = cameras.filter((c) => c.sector === sector).sort((a, b) => a.distance - b.distance)[0];
-    if (camera) picks.push(camera);
+  // 러닝 본문은 가까운 카메라부터 보여 줍니다. 동률은 API에서 정한 안정적인 좌표 ID로 정렬합니다.
+  return cameras.slice().sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id)).slice(0, 8);
+}
+
+function itsResponseError(message = "ITS CCTV 응답 오류") {
+  const error = new Error(message);
+  error.code = "ITS_INVALID_RESPONSE";
+  return error;
+}
+
+export function parseItsCctvResponse(text) {
+  const source=String(text || "").trim();
+  if (!source) throw itsResponseError("ITS CCTV 응답이 비어 있습니다.");
+  try {
+    const json=JSON.parse(source), response=json?.response;
+    if (!response || typeof response !== "object") throw itsResponseError("ITS CCTV JSON 형식을 확인하지 못했습니다.");
+    const errorMessage=response.error || response.errorMessage || response.message;
+    if (errorMessage || String(response.resultCode || "") === "000") throw itsResponseError(`ITS CCTV 오류: ${errorMessage || response.resultMsg || "System error"}`);
+    if (Array.isArray(response.data)) return response.data;
+    if (String(response.datacount ?? "") === "0" && (response.data == null)) return [];
+    throw itsResponseError("ITS CCTV 목록 형식을 확인하지 못했습니다.");
+  } catch (error) {
+    if (error?.code === "ITS_INVALID_RESPONSE") throw error;
   }
-  return picks.slice(0, 8);
+  if (!/<(?:\w+:)?response\b/i.test(source) || /<html\b|<title\b/i.test(source)) throw itsResponseError("ITS CCTV 응답 형식을 확인하지 못했습니다.");
+  const resultCode=parseXmlTag(source,"resultCode"), resultMessage=parseXmlTag(source,"resultMsg") || parseXmlTag(source,"message");
+  if (resultCode === "000" || /(?:error|인증|system)/i.test(resultMessage)) throw itsResponseError(`ITS CCTV 오류: ${resultMessage || "System error"}`);
+  const raw=[...source.matchAll(/<data>([\s\S]*?)<\/data>/gi)].map((match) => ({
+    cctvname: parseXmlTag(match[1], "cctvname"),
+    coordx: parseXmlTag(match[1], "coordx"), coordy: parseXmlTag(match[1], "coordy"),
+    cctvurl: parseXmlTag(match[1], "cctvurl"), cctvformat: parseXmlTag(match[1], "cctvformat"),
+    cctvtype: parseXmlTag(match[1], "cctvtype"),
+  }));
+  if (raw.length) return raw;
+  if (parseXmlTag(source,"datacount") === "0") return [];
+  throw itsResponseError("ITS CCTV 목록 형식을 확인하지 못했습니다.");
 }
 
 async function getItsCctv(apiKey, target, cacheTrace = []) {
@@ -811,28 +851,17 @@ async function getItsCctv(apiKey, target, cacheTrace = []) {
     getType: "json",
   });
   const location = `bbox${(target.lon - .55).toFixed(3)},${(target.lat - .42).toFixed(3)},${(target.lon + .55).toFixed(3)},${(target.lat + .42).toFixed(3)}`;
-  const text = await cachedRawLoad(buildRawCacheKey({
+  const raw = await cachedRawLoad(buildRawCacheKey({
     provider: "its", dataset: "cctv-info", location, cycle: "live", variant: "type-all-cctv3-jsonxml",
-  }), () => httpsGetText(`https://openapi.its.go.kr:9443/cctvInfo?${params}`, {
+  }), async () => parseItsCctvResponse(await httpsGetText(`https://openapi.its.go.kr:9443/cctvInfo?${params}`, {
     timeout: 12_000,
     headers: { "User-Agent": "RunCast-Jamsil/0.1 local-dashboard", Accept: "application/json, application/xml" },
-  }), { trace: cacheTrace, freshMs: 25_000, staleMs: 45_000, failureMs: 20_000 });
-  let raw = [];
-  try {
-    const json = JSON.parse(text);
-    raw = json?.response?.data || [];
-  } catch {
-    raw = [...text.matchAll(/<data>([\s\S]*?)<\/data>/gi)].map((match) => ({
-      cctvname: parseXmlTag(match[1], "cctvname"),
-      coordx: parseXmlTag(match[1], "coordx"), coordy: parseXmlTag(match[1], "coordy"),
-      cctvurl: parseXmlTag(match[1], "cctvurl"), cctvformat: parseXmlTag(match[1], "cctvformat"),
-      cctvtype: parseXmlTag(match[1], "cctvtype"),
-    }));
-  }
+  })), { trace: cacheTrace, freshMs: 25_000, staleMs: 45_000, failureMs: 20_000 });
   const cameras = raw.map((item) => normalizeCctv(item, target)).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon) && c.url && c.distance <= 15);
   const chosen = chooseDirectionalCctv(cameras);
   for (const camera of chosen) knownCctvUrls.add(camera.url);
-  return chosen;
+  const event=cacheTrace.filter(item=>item.provider === "its" && item.dataset === "cctv-info" && item.fetchedAt).at(-1);
+  return { cameras: chosen, cache: event ? { fetchedAt:event.fetchedAt, usableUntil:event.staleUntil, stale:event.state === "stale-if-error" } : null };
 }
 
 async function getAviation(cacheTrace = []) {
@@ -1055,16 +1084,20 @@ async function mobileContext(body) {
   const errors = [];
   // CCTV와 항공기상은 첫 판단과 독립적이므로 병렬·후속으로 조회합니다.
   const [cctvResult, aviationResult] = await Promise.allSettled([
-    keys.itsApiKey ? getItsCctv(keys.itsApiKey, route, cacheTrace) : Promise.resolve([]),
+    keys.itsApiKey ? getItsCctv(keys.itsApiKey, route, cacheTrace) : Promise.resolve({ cameras: [], cache: null }),
     haversine(route.lat, route.lon, 37.5082, 127.1001) <= 65 ? getAviation(cacheTrace) : Promise.resolve({ metar: [], taf: [] }),
   ]);
-  const cctvs = cctvResult.status === "fulfilled" ? cctvResult.value : [];
+  const cctvPayload = cctvResult.status === "fulfilled" ? cctvResult.value : { cameras: [], cache: null };
+  const cctvs = cctvPayload.cameras;
   if (cctvResult.status === "rejected") errors.push(`CCTV: ${cctvResult.reason?.message || "조회 실패"}`);
   const cctv = {
     configured: Boolean(keys.itsApiKey),
     available: cctvs.length > 0,
     // 목록이 존재해도 AI 관측 전에는 비가 없다는 근거가 아닙니다.
     included: cctvs.some((camera) => ["yes", "no", "uncertain"].includes(camera.rainNow)),
+    fetchedAt: cctvPayload.cache?.fetchedAt || null,
+    usableUntil: cctvPayload.cache?.usableUntil || null,
+    stale: Boolean(cctvPayload.cache?.stale),
   };
   const aviation = aviationResult.status === "fulfilled" ? aviationResult.value : { metar: [], taf: [] };
   if (aviationResult.status === "rejected") errors.push(`METAR/TAF: ${aviationResult.reason?.message || "조회 실패"}`);
@@ -1273,7 +1306,7 @@ async function getStatus() {
 async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
-    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/weather-domain.mjs", "assets/mobile-extra.js", "sw.js",
+    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/ui-icons.mjs", "sw.js",
     "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/apple-touch-icon-v2.png", "assets/pwa-icon-192.png",
     "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png",
     "assets/apple-startup-1320x2868.png", "assets/apple-startup-1206x2622.png",

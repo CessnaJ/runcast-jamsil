@@ -47,9 +47,9 @@
   <div class="mobile-app">
     <header class="mobile-header">
       <span class="mobile-brand" role="img" aria-label="RunCast">RC</span>
-      <button id="locationBtn" aria-haspopup="dialog"><b id="locationName">석촌호수</b><span aria-hidden="true">⌄</span></button>
-      <button class="icon-btn" id="refreshBtn" aria-label="활성 화면 새로고침" aria-busy="false">↻</button>
-      <button class="icon-btn" id="moreBtn" aria-label="더 보기" aria-expanded="false" aria-controls="moreMenu">⋯</button>
+      <button id="locationBtn" aria-haspopup="dialog"><b id="locationName">석촌호수</b><svg class="ui-icon ui-icon-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+      <button class="icon-btn" id="refreshBtn" aria-label="활성 화면 새로고침" aria-busy="false"><svg class="ui-icon ui-icon-refresh" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4L4 9"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4L20 15"/><path d="M20 20v-5h-5"/></svg></button>
+      <button class="icon-btn" id="moreBtn" aria-label="더 보기" aria-expanded="false" aria-controls="moreMenu"><svg class="ui-icon ui-icon-more" aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></svg></button>
       <div id="moreMenu" class="more-menu" hidden><button id="settingsBtn">연결 상태</button><a href="/?view=desktop">데스크톱 보기</a></div>
     </header>
     <main class="mobile-main">
@@ -59,13 +59,37 @@
         <div id="decisionContent" hidden>
           <section class="departure-modes" aria-label="1시간 러닝 출발 시각 선택"><div class="departure-mode-list" id="departureModes" role="tablist" aria-label="출발 시각"></div></section>
           <article class="decision-hero" id="decisionHero" aria-live="polite">
-            <p id="decisionWindow"></p><h1 id="decisionTitle"></h1>
+            <p id="decisionWindow"></p>
+            <div class="hero-title-line"><span class="decision-status-icon" id="decisionStatusIcon" aria-hidden="true"></span><h1 id="decisionTitle"></h1></div>
             <div id="decisionReason"></div>
-            <button class="map-cta" id="runMapCta">비구름 보기 →</button>
+            <div class="hero-actions"><button class="hero-action" id="runMapCta">비구름 보기 <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button><button class="hero-action" id="jumpCctv">CCTV 확인 <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button></div>
           </article>
-          <section class="timeline-section" aria-label="출발부터 복귀까지"><div class="run-progression" id="timelineRail"></div></section>
-          <button class="evidence-link" id="openEvidence">판단 근거 <span>›</span></button>
+          <section class="evidence-section" aria-labelledby="evidenceTitle">
+            <h2 id="evidenceTitle">판단 근거</h2>
+            <div class="evidence-panel">
+              <div class="run-progression" id="timelineRail" aria-label="출발부터 복귀까지"></div>
+              <div id="evidenceSummary"></div>
+            <details class="inline-detail" id="forecastDetails"><summary>예보 상세 <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></summary><div class="detail-body" id="evidenceDetail"></div></details>
+            </div>
+          </section>
         </div>
+        <section class="cctv-section" id="cctvSection" aria-labelledby="cctvTitle" tabindex="-1">
+          <div class="section-heading"><h2 id="cctvTitle">주변 CCTV</h2><span>현재 현장</span></div>
+          <p class="source-note">선택한 위치 주변 15km · 원본 영상은 새 창에서 열립니다.</p>
+          <div class="cctv-rail" id="cctvRail" aria-live="polite"></div>
+          <button class="more-cctv" id="moreCctv" hidden></button>
+          <button class="ai-btn" id="analyzeBtn" hidden disabled>CCTV로 비·노면 확인</button><p class="ai-hint" id="analysisHint" hidden></p>
+        </section>
+        <details class="reference-details" id="referenceDetails"><summary>전문 참고 <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></summary>
+          <div class="detail-body aviation-detail" id="aviationDetail"></div>
+          <div class="detail-body source-list">
+            <a href="https://www.weather.go.kr/w/image/vshrt/rain.do?itv=0.5&amp;mapType=gis&amp;timeTerm=5" target="_blank" rel="noopener">기상청 초단기 강수예측 <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v5H6V6h5"/></svg></a>
+            <a href="https://www.data.go.kr/data/15084084/openapi.do" target="_blank" rel="noopener">기상청 단기·초단기예보 API <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v5H6V6h5"/></svg></a>
+            <a href="https://open-meteo.com/en/docs" target="_blank" rel="noopener">Open-Meteo 다중모델 <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v5H6V6h5"/></svg></a>
+            <a href="https://amo.kma.go.kr/weather/airport.do?icaoCode=RKSM" target="_blank" rel="noopener">성남 서울공항 기상 <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v5H6V6h5"/></svg></a>
+            <a href="https://www.its.go.kr/opendata/intro" target="_blank" rel="noopener">국가교통정보센터 CCTV <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v5H6V6h5"/></svg></a>
+          </div>
+        </details>
         <p class="mobile-disclaimer">눈·비 기준 참고 정보이며 기상특보를 대체하지 않습니다.</p>
       </section>
       <section class="mobile-view map-view" data-view="map" aria-label="비구름">
@@ -77,54 +101,32 @@
           <div class="map-selected" id="mapSelected"><b>현재 기준</b></div>
           <div class="radar-controller" id="radarController">
             <div class="radar-head"><b id="radarProduct">강수 영상</b><em id="radarState">대기</em></div>
-            <div class="radar-controls"><button id="radarPlay" aria-label="강수 영상 재생 또는 일시정지">Ⅱ</button><div id="radarDots"></div><strong id="radarFrameLabel">T+00m</strong></div>
+            <div class="radar-controls"><button id="radarPlay" aria-label="강수 영상 일시정지"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg></button><div id="radarDots"></div><strong id="radarFrameLabel">현재</strong></div>
           </div>
         </div>
-        <div class="map-caption"><span>● 러닝 위치</span><span>● 강수대</span></div>
-        <button class="evidence-link" id="openCctv">주변 CCTV · <span id="cctvCount">0곳</span></button>
+        <div class="map-caption"><span class="map-legend-item"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8 13 2-2 2 2 4-4"/></svg>러닝 위치</span><span class="map-legend-item"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M7 16.5a4.5 4.5 0 1 1 1.2-8.8A5.5 5.5 0 0 1 18 10.5 3.5 3.5 0 0 1 17 17H7Z"/></svg>강수대</span><span class="map-legend-item"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8h4l1.5-2h5L16 8h4v10H4V8Z"/><circle cx="12" cy="13" r="3"/></svg>CCTV</span></div>
+        <button class="evidence-link" id="openCctv">주변 CCTV 보기 <svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
       </section>
       <section class="mobile-view weekly-view" data-view="weekly" aria-label="주간 예보와 옷차림">
         <p class="data-stamp" id="weeklyStamp" aria-live="polite"></p><div id="weeklyContent"></div><div id="exerciseGuides" hidden></div>
       </section>
     </main>
     <nav class="bottom-nav" aria-label="주요 화면">
-      <button class="active" data-tab="decision" aria-current="page"><span aria-hidden="true">✓</span><b>러닝</b></button>
-      <button data-tab="map"><span aria-hidden="true">◎</span><b>비구름</b></button>
-      <button data-tab="weekly"><span aria-hidden="true">▤</span><b>주간</b></button>
+      <button class="active" data-tab="decision" aria-current="page"><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8 13 2-2 2 2 4-4"/></svg></span><b>러닝</b></button>
+      <button data-tab="map"><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15M15 6v15"/></svg></span><b>비구름</b></button>
+      <button data-tab="weekly"><span aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01"/></svg></span><b>주간</b></button>
     </nav>
   </div>
-  <dialog class="bottom-sheet" id="evidenceSheet" aria-labelledby="evidenceTitle">
-    <div class="sheet-head"><h2 id="evidenceTitle">판단 근거</h2><button data-close-sheet aria-label="판단 근거 닫기">×</button></div>
-    <div id="evidenceSummary"></div>
-    <details class="detail-card"><summary>예보와 노면 상세</summary><div class="detail-body" id="evidenceDetail"></div><p class="detail-body">강수확률은 러닝 구간의 최대 확률, 강수량은 1시간 예상 누적량입니다. 노면은 CCTV 관측 또는 최근 강수에 따른 추정입니다.</p></details>
-    <details class="detail-card"><summary>주변 공항 날씨 참고</summary><div class="detail-body aviation-detail" id="aviationDetail"></div></details>
-    <details class="detail-card"><summary>참고 자료 링크</summary>
-          <div class="detail-body source-list">
-            <a href="https://www.weather.go.kr/w/image/vshrt/rain.do?itv=0.5&amp;mapType=gis&amp;timeTerm=5" target="_blank" rel="noopener">기상청 초단기 강수예측 <span>↗</span></a>
-            <a href="https://www.data.go.kr/data/15084084/openapi.do" target="_blank" rel="noopener">기상청 단기·초단기예보 API <span>↗</span></a>
-            <a href="https://open-meteo.com/en/docs" target="_blank" rel="noopener">Open-Meteo 다중모델 <span>↗</span></a>
-            <a href="https://amo.kma.go.kr/weather/airport.do?icaoCode=RKSM" target="_blank" rel="noopener">성남 서울공항 기상 <span>↗</span></a>
-            <a href="https://www.its.go.kr/opendata/intro" target="_blank" rel="noopener">국가교통정보센터 CCTV <span>↗</span></a>
-          </div>
-
-    </details>
-    <button class="evidence-link" id="evidenceCctv">주변 CCTV 보기 <span>›</span></button>
-  </dialog>
-  <dialog class="bottom-sheet" id="cctvSheet" aria-labelledby="cctvTitle">
-    <div class="sheet-head"><h2 id="cctvTitle">주변 CCTV</h2><button data-close-sheet aria-label="CCTV 닫기">×</button></div>
-    <p class="source-note">선택한 위치 주변 15km · 원본 영상은 새 창에서 열립니다.</p>
-    <div class="cctv-rail" id="cctvRail"></div><button class="ai-btn" id="analyzeBtn" disabled>CCTV로 비·노면 확인</button><p class="ai-hint" id="analysisHint"></p>
-  </dialog>
   <dialog class="bottom-sheet" id="settingsSheet" aria-labelledby="settingsTitle">
-    <div class="sheet-head"><h2 id="settingsTitle">연결 상태</h2><button id="closeSettings" aria-label="연결 상태 닫기">×</button></div>
-    <p class="source-note" id="settingsIntro">키 값은 서버 환경변수에서만 사용합니다.</p><div class="connection-list" id="connectionList" aria-live="polite"></div>
+    <div class="sheet-head"><h2 id="settingsTitle">연결 상태</h2><button id="closeSettings" aria-label="연결 상태 닫기"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <p class="source-note" id="settingsIntro">API 연결 상태를 확인하고 있어요.</p><div class="connection-list" id="connectionList" aria-live="polite"></div>
     <p class="source-note">Naver Maps Client ID는 지도 SDK용 공개 식별자이며, 기상청·ITS 키는 브라우저에 노출되지 않습니다.</p>
   </dialog>
   <dialog id="locationDialog" class="location-dialog" aria-labelledby="locationTitle">
-    <div class="sheet-head"><h2 id="locationTitle">위치 선택</h2><button id="closeLocation" aria-label="위치 선택 닫기">×</button></div>
+    <div class="sheet-head"><h2 id="locationTitle">위치 선택</h2><button id="closeLocation" aria-label="위치 선택 닫기"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
     <div class="picker-body">
       <p id="selectedLocationLabel" class="source-note"></p><div class="preset-places" id="savedPlaces"></div>
-      <div class="picker-wrap"><div id="locationMap"></div><span class="center-pin" aria-hidden="true">⊕</span><button id="locateMe">⌖ 현재 위치</button><div id="pickerMessage"><p>지도를 준비하고 있어요</p><button id="retryPicker" hidden>다시 불러오기</button></div></div>
+      <div class="picker-wrap"><div id="locationMap"></div><span class="center-pin" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><path d="M12 21s6-5.1 6-11a6 6 0 1 0-12 0c0 5.9 6 11 6 11Z"/><circle cx="12" cy="10" r="2"/></svg></span><button id="locateMe"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg> 현재 위치</button><div id="pickerMessage"><p>지도를 준비하고 있어요</p><button id="retryPicker" hidden>다시 불러오기</button></div></div>
       <p class="picker-hint">지도를 움직여 러닝 지점을 맞춰 주세요.</p>
       <details id="locationDetails" class="coordinate-details"><summary>위치 상세</summary>
         <label class="place-label" for="placeName">이름 <small>선택 사항</small></label><input id="placeName" maxlength="30" placeholder="선택한 위치" autocomplete="off">

@@ -1,8 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ROUTES, resolveLocation, isSupportedLocation, normalizeWeekly, recommendRunningWear } from '../assets/weather-domain.mjs';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ROUTES, resolveLocation, isSupportedLocation, normalizeWeekly, recommendRunningWear, hourlyBucketEpoch, hourlyPointAt, hourlyTemperatureAt, roundTemperature } from '../assets/weather-domain.mjs';
 process.env.VERCEL='1';
-const { assessRunForecast, makeDecision, summarizeRunWindow, cachedRawLoad, resetRawCacheForTest, requestHandler } = await import('../server.mjs');
+const { assessRunForecast, makeDecision, summarizeRunWindow, cachedRawLoad, resetRawCacheForTest, requestHandler, loadLocalKeys, parseItsCctvResponse } = await import('../server.mjs');
+
+test('local keys load from files with environment precedence; Vercel ignores local files',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'runcast-key-test-'));
+  try {
+    await writeFile(join(root,'.env'),'NAVER_MAP_CLIENT_ID=base-map\nKMA_SERVICE_KEY=base-weather\nKMA_HUB_KEY=base-radar\nITS_API_KEY=base-cctv\n');
+    await writeFile(join(root,'.env.local'),'NAVER_MAP_CLIENT_ID="local-map"\nKMA_SERVICE_KEY=local-weather\nKMA_HUB_KEY=\n');
+    const environment={KMA_SERVICE_KEY:' process-weather '};
+    assert.deepEqual(await loadLocalKeys(root,environment),{naverKey:'local-map',kmaServiceKey:'process-weather',kmaHubKey:'base-radar',itsApiKey:'base-cctv'});
+    assert.deepEqual(await loadLocalKeys(root,{...environment,VERCEL:'1'}),{naverKey:'',kmaServiceKey:'process-weather',kmaHubKey:'',itsApiKey:''});
+  } finally { await rm(root,{recursive:true,force:true}); }
+});
+
+test('key files cannot be served and config exposes only the public map identifier',async()=>{
+  for(const url of ['/.env','/.env.local','/api/config']) {
+    let status,body;
+    await requestHandler({url,method:'GET',headers:{}},{writeHead(s){status=s;},end(b){body=JSON.parse(b);}});
+    if(url==='/api/config'){assert.equal(status,200);assert.deepEqual(Object.keys(body.keys),['naverKey']);}
+    else assert.equal(status,404);
+  }
+});
 
 test('location validates Korean support areas and preserves legacy presets',()=>{
   assert.deepEqual(resolveLocation({route:'olympic'}),ROUTES.olympic);
@@ -35,6 +58,30 @@ test('weekly data keeps null distinct from zero and contains seven calendar days
   assert.equal(data.daily.length,7);assert.equal(data.hourly[0].temperature,0);assert.equal(data.hourly[0].probability,null);assert.equal(data.hourly[1].probability,0);assert.equal(data.units.windSpeed,'m/s');
   assert.equal(data.expiresAt,'2026-09-11T15:30:00.000Z');
 });
+test('weekly normalization rejects quoted numeric samples instead of coercing them to zero',()=>{
+  const data=normalizeWeekly({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:['0',1]},daily:{time:['2026-09-12'],temperature_2m_min:['0'],temperature_2m_max:[1]}},ROUTES.seokchon,'2026-09-11T15:00:00Z');
+  assert.equal(data.hourly[0].temperature,null);
+  assert.equal(data.daily[0].low,null);
+  assert.equal(data.daily[0].high,1);
+});
+test('hourly temperature uses exact local-hour buckets and shared negative rounding',()=>{
+  const hourly=[
+    {time:'2026-09-18T23:00:00+09:00',temperature:-2.5},
+    {time:'2026-09-19T00:00:00+09:00',temperature:0},
+    {time:'2026-09-19T06:00:00+09:00',temperature:-1.4},
+  ];
+  assert.equal(hourlyBucketEpoch('2026-09-19T06:24:00+09:00'),hourlyBucketEpoch('2026-09-19T06:00:00+09:00'));
+  assert.equal(hourlyPointAt(hourly,'2026-09-19T06:24:00+09:00')?.temperature,-1.4);
+  assert.equal(hourlyTemperatureAt(hourly,'2026-09-19T00:59:00+09:00'),0);
+  assert.equal(hourlyTemperatureAt(hourly,'2026-09-19T05:59:00+09:00'),null);
+  assert.equal(hourlyTemperatureAt([{time:'2026-09-19T06:00:00+09:00',temperature:null}], '2026-09-19T06:00:00+09:00'),null);
+  assert.equal(hourlyTemperatureAt([{time:'2026-09-19T06:00:00+09:00',temperature:'0'}], '2026-09-19T06:00:00+09:00'),null);
+  assert.equal(roundTemperature(0),0);
+  assert.equal(roundTemperature(-2.5),-3);
+  assert.equal(roundTemperature(-1.4),-1);
+  assert.equal(roundTemperature(-0.2),0);
+  assert.equal(roundTemperature(null),null);
+});
 const hours=[{time:'2026-09-18T23:00:00+09:00',feelsLike:11.9,windSpeed:3,gusts:5,precipitation:0},{time:'2026-09-19T00:00:00+09:00',feelsLike:12.1,windSpeed:9,gusts:13,precipitation:1}];
 test('clothing uses full hour including midnight, has wind note without double subtraction',()=>{
   const normal=recommendRunningWear(hours,hours[0].time);
@@ -52,6 +99,19 @@ test('expired raw data revalidates and preserves original update time on failure
   const original=trace.at(-1).fetchedAt;
   const value=await cachedRawLoad('v1|test|weather|place|now|test',async()=>{throw Error('offline');},{trace});
   assert.deepEqual(value,{a:1});assert.equal(trace.at(-1).state,'stale-if-error');assert.equal(trace.at(-1).fetchedAt,original);
+});
+test('ITS CCTV accepts only known list or explicit zero responses',()=>{
+  assert.deepEqual(parseItsCctvResponse('{"response":{"data":[],"datacount":"0"}}'),[]);
+  assert.equal(parseItsCctvResponse('{"response":{"data":[{"cctvname":"검증 카메라"}]}}')[0].cctvname,'검증 카메라');
+  assert.deepEqual(parseItsCctvResponse('<response><datacount>0</datacount></response>'),[]);
+  for(const body of ['<html><title>Unauthorized</title></html>','{"response":{"resultCode":"000","resultMsg":"System error"}}','{"error":"bad gateway"}','{"response":{}}'])assert.throws(()=>parseItsCctvResponse(body),/ITS CCTV/);
+});
+test('ITS CCTV stale fallback keeps a last known valid list after an invalid upstream response',async()=>{
+  resetRawCacheForTest();const trace=[],key='v1|its|cctv-info|fixture|live|strict-parser';
+  const list=await cachedRawLoad(key,async()=>parseItsCctvResponse('{"response":{"data":[{"cctvname":"최근 카메라"}]}}'),{freshMs:-1,staleMs:10000,trace});
+  const original=trace.at(-1).fetchedAt;
+  const stale=await cachedRawLoad(key,async()=>parseItsCctvResponse('<html>upstream error</html>'),{trace});
+  assert.deepEqual(stale,list);assert.equal(trace.at(-1).state,'stale-if-error');assert.equal(trace.at(-1).fetchedAt,original);
 });
 test('API rejects invalid custom coordinates instead of silently returning Jamsil',async()=>{
   const req={url:'/api/weekly-forecast',method:'POST',headers:{},async *[Symbol.asyncIterator](){yield Buffer.from(JSON.stringify({location:{lat:0,lon:0}}));}};
