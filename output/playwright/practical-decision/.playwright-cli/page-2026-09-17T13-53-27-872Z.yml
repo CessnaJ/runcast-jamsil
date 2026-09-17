@@ -1,0 +1,26 @@
+- generic [active] [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - banner [ref=f2e3]:
+      - img "RunCast" [ref=f2e4]: RC
+      - button "석촌호수" [ref=f2e5] [cursor=pointer]
+      - button "활성 화면 새로고침" [ref=f2e9] [cursor=pointer]
+      - button "더 보기" [ref=f2e15] [cursor=pointer]
+    - main [ref=f2e20]:
+      - region "러닝 판단" [ref=f2e21]:
+        - generic [ref=f2e22]:
+          - paragraph [ref=f2e23]: 날씨를 불러오지 못했어요
+          - button "다시 시도" [ref=f2e24] [cursor=pointer]
+        - region [ref=f2e25]:
+          - generic [ref=f2e26]:
+            - heading "주변 CCTV" [level=2] [ref=f2e27]
+            - generic [ref=f2e28]: 현재 현장
+          - paragraph [ref=f2e29]: 선택한 위치 주변 15km · 원본 영상은 새 창으로 열려요.
+          - generic [ref=f2e30]: CCTV 연결이 설정되지 않았어요
+        - group [ref=f2e32]:
+          - generic "자료 출처" [ref=f2e33] [cursor=pointer]
+        - paragraph [ref=f2e36]: 눈·비 참고 정보라 기상특보 대신 사용할 수 없어요.
+    - navigation "주요 화면" [ref=f2e37]:
+      - button "러닝" [ref=f2e38] [cursor=pointer]
+      - button "비구름" [ref=f2e43] [cursor=pointer]
+      - button "주간" [ref=f2e49] [cursor=pointer]
+  - status

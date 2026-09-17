@@ -1,3 +1,4 @@
+import { ROUTES, resolveLocation, normalizeWeekly, numberOrNull, evaluateRunWindow, runSampleMetrics } from './assets/weather-domain.mjs';
 import http from "node:http";
 import https from "node:https";
 import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
@@ -28,11 +29,7 @@ const CODEX_COMMANDS = [...new Set([
   "codex",
 ].filter(Boolean))];
 
-const ROUTES = {
-  seokchon: { name: "석촌호수", lat: 37.5082, lon: 127.1001 },
-  olympic: { name: "올림픽공원", lat: 37.5207, lon: 127.1215 },
-  hanriver: { name: "잠실 한강", lat: 37.5197, lon: 127.0857 },
-};
+
 
 function parseEnvFile(source) {
   const values = {};
@@ -49,20 +46,31 @@ function parseEnvFile(source) {
   return values;
 }
 
-async function loadLocalKeys() {
+export async function loadLocalKeys(root = ROOT, environment = process.env) {
   let fileValues = {};
-  try { fileValues = parseEnvFile(await readFile(join(ROOT, ".env.local"), "utf8")); }
-  catch { /* .env.local은 선택 사항입니다. */ }
+  // 로컬 테스트: .env < .env.local < 실행 환경변수 순서로 적용합니다.
+  // Vercel 배포는 프로젝트에 설정한 환경변수만 사용합니다.
+  if (!environment.VERCEL) {
+    for (const filename of [".env", ".env.local"]) {
+      try {
+        const parsed = parseEnvFile(await readFile(join(root, filename), "utf8"));
+        Object.assign(fileValues, Object.fromEntries(Object.entries(parsed).filter(([, value]) => value.trim())));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+  }
+  const key = name => String(environment[name] || "").trim() || String(fileValues[name] || "").trim();
   return {
-    naverKey: process.env.NAVER_MAP_CLIENT_ID || fileValues.NAVER_MAP_CLIENT_ID || "",
-    kmaServiceKey: process.env.KMA_SERVICE_KEY || fileValues.KMA_SERVICE_KEY || "",
-    kmaHubKey: process.env.KMA_HUB_KEY || fileValues.KMA_HUB_KEY || "",
-    itsApiKey: process.env.ITS_API_KEY || fileValues.ITS_API_KEY || "",
+    naverKey: key("NAVER_MAP_CLIENT_ID"),
+    kmaServiceKey: key("KMA_SERVICE_KEY"),
+    kmaHubKey: key("KMA_HUB_KEY"),
+    itsApiKey: key("ITS_API_KEY"),
   };
 }
 
 function effectiveKeys() {
-  // 비밀 키는 서버 환경변수/.env.local에서만 읽습니다.
+  // 비밀 키는 실행 환경변수 또는 로컬 .env/.env.local에서 읽습니다.
   // 브라우저가 보낸 값은 로컬 모드에서도 신뢰하거나 사용하지 않습니다.
   return Object.fromEntries(Object.keys(LOCAL_KEYS).map((name) => [name, String(LOCAL_KEYS[name] || "").trim()]));
 }
@@ -102,7 +110,20 @@ async function fetchJson(url, options = {}) {
       ...(options.headers || {}),
     },
   });
-  if (!response.ok) throw new Error(`외부 자료 요청 실패 (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(`외부 자료 요청 실패 (${response.status})`);
+    error.statusCode = response.status;
+    const retryAfter = response.headers.get("Retry-After");
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      if (Number.isFinite(seconds)) error.retryAfterMs = Math.max(0, seconds * 1000);
+      else {
+        const retryAt = Date.parse(retryAfter);
+        if (Number.isFinite(retryAt)) error.retryAt = retryAt;
+      }
+    }
+    throw error;
+  }
   return response.json();
 }
 
@@ -142,6 +163,15 @@ function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2_000_00
         if (status < 200 || status >= 300) {
           const error = new Error(`ITS CCTV 요청 실패 (${status || "응답 없음"})`);
           error.statusCode = status || 502;
+          const retryAfter = response.headers?.["retry-after"] || response.headers?.["Retry-After"];
+          if (retryAfter) {
+            const seconds = Number(retryAfter);
+            if (Number.isFinite(seconds)) error.retryAfterMs = Math.max(0, seconds * 1000);
+            else {
+              const retryAt = Date.parse(retryAfter);
+              if (Number.isFinite(retryAt)) error.retryAt = retryAt;
+            }
+          }
           reject(error);
           return;
         }
@@ -176,6 +206,8 @@ function cacheDiagnostic(trace, key, state, entry, extra = {}) {
     fetchedAt: entry?.fetchedAt ? new Date(entry.fetchedAt).toISOString() : null,
     expiresAt: entry?.expiresAt ? new Date(entry.expiresAt).toISOString() : null,
     staleUntil: entry?.staleUntil ? new Date(entry.staleUntil).toISOString() : null,
+    retryAt: entry?.retryAt ? new Date(entry.retryAt).toISOString() : null,
+    stale: Boolean(entry?.stale || state === "stale-if-error" || state === "stale-cooldown"),
     sourceIssuedAt: entry?.sourceIssuedAt || null,
     ...extra,
   });
@@ -190,15 +222,25 @@ function trimRawCache() {
   while (rawCache.size > RAW_CACHE_MAX_ENTRIES) rawCache.delete(rawCache.keys().next().value);
 }
 
-function cacheError(message) {
+function cacheError(message, entry = null) {
   const error = new Error(message);
   error.cachedFailure = true;
+  if (Number.isFinite(entry?.retryAt)) error.retryAt = entry.retryAt;
   return error;
+}
+
+function retryDelayFrom(error, fallbackMs) {
+  if (Number.isFinite(error?.retryAfterMs)) return Math.max(fallbackMs, error.retryAfterMs);
+  if (Number.isFinite(error?.retryAt)) return Math.max(fallbackMs, error.retryAt - Date.now());
+  return fallbackMs;
 }
 
 /**
  * 신선한 원천 응답은 5분, 오류 시 마지막 성공 응답은 최대 15분까지 fallback 합니다.
- * 동일 key 요청은 inflight promise 하나를 공유합니다. 키에 인증키/UI 모드는 절대 포함하지 않습니다.
+ * stale fallback을 시도한 시각에는 retryAt을 별도로 기록해 failureMs 동안
+ * 외부 원천을 다시 부르지 않습니다. fetchedAt/expiresAt/staleUntil은 원래
+ * 자료 시각을 유지합니다. 동일 key 요청은 inflight promise 하나를 공유하며,
+ * 키에 인증키/UI 모드는 절대 포함하지 않습니다.
  */
 export async function cachedRawLoad(key, loader, options = {}) {
   const {
@@ -212,14 +254,25 @@ export async function cachedRawLoad(key, loader, options = {}) {
     cacheDiagnostic(trace, key, "fresh-hit", existing);
     return existing.value;
   }
+  if (existing?.retryAt && now < existing.retryAt) {
+    touchRawCache(key, existing);
+    if (existing.value !== undefined && now < existing.staleUntil) {
+      cacheDiagnostic(trace, key, "stale-cooldown", existing, { upstreamError: true });
+      return existing.value;
+    }
+    cacheDiagnostic(trace, key, "negative-hit", existing, { staleExpired: existing.value !== undefined });
+    throw cacheError(existing.error || existing.lastError || "원천 자료 재시도 대기 중", existing);
+  }
   if (existing?.error && now < existing.expiresAt) {
     touchRawCache(key, existing);
     cacheDiagnostic(trace, key, "negative-hit", existing);
-    throw cacheError(existing.error);
+    throw cacheError(existing.error, existing);
   }
   if (inflightCache.has(key)) {
     cacheDiagnostic(trace, key, "coalesced", existing);
-    return inflightCache.get(key);
+    const value = await inflightCache.get(key);
+    cacheDiagnostic(trace, key, "coalesced-result", rawCache.get(key));
+    return value;
   }
   cacheDiagnostic(trace, key, existing?.value !== undefined ? "refresh" : "miss", existing);
   const staleEntry = existing?.value !== undefined && now < existing.staleUntil ? existing : null;
@@ -237,12 +290,22 @@ export async function cachedRawLoad(key, loader, options = {}) {
       return value;
     } catch (error) {
       if (staleEntry) {
-        touchRawCache(key, staleEntry);
-        cacheDiagnostic(trace, key, "stale-if-error", staleEntry, { upstreamError: true });
+        const failedAt = Date.now();
+        const retryAt = failedAt + retryDelayFrom(error, failureMs);
+        const entry = {
+          ...staleEntry,
+          stale: true,
+          staleFailureAt: failedAt,
+          retryAt,
+          lastError: error?.message || "원천 자료 요청 실패",
+        };
+        touchRawCache(key, entry);
+        cacheDiagnostic(trace, key, "stale-if-error", entry, { upstreamError: true });
         return staleEntry.value;
       }
       const failedAt = Date.now();
-      const entry = { error: error?.message || "원천 자료 요청 실패", fetchedAt: failedAt, expiresAt: failedAt + failureMs, staleUntil: failedAt + failureMs, sourceIssuedAt: null };
+      const retryAt = failedAt + retryDelayFrom(error, failureMs);
+      const entry = { error: error?.message || "원천 자료 요청 실패", fetchedAt: failedAt, expiresAt: retryAt, staleUntil: retryAt, retryAt, sourceIssuedAt: null };
       rawCache.set(key, entry); trimRawCache();
       throw error;
     } finally {
@@ -367,16 +430,17 @@ function latLonToKmaGrid(lat, lon) {
 }
 
 function parseRainMm(value) {
-  if (value == null) return 0;
+  if (value == null || value === "") return null;
   const text = String(value);
   if (text.includes("강수없음")) return 0;
   if (text.includes("미만")) return 0.5;
   const match = text.match(/[\d.]+/);
-  return match ? Number(match[0]) : 0;
+  return match ? Number(match[0]) : null;
 }
 
 function rainLevel(mm, pty) {
   if (Number(pty) > 0 || mm >= 1) return mm >= 5 ? "heavy" : mm >= 1 ? "moderate" : "light";
+  if (mm == null && (pty == null || pty === "")) return "unknown";
   if (mm > 0) return "light";
   return "none";
 }
@@ -459,14 +523,14 @@ async function getKmaForecast(serviceKey, route, requestedMinutes = [0, 30, 60, 
     const level = rainLevel(mm, group?.PTY);
     return {
       minutes,
-      rain: level !== "none",
+      rain: !["none", "unknown"].includes(level),
       level,
-      mm,
+      mm, precipitationType: numberOrNull(group?.PTY), unavailable: mm == null || !group || group.targetDiffMinutes > 45,
       amountText: mm > 0 ? String(group?.RN1 || `${mm} mm`) : "0 mm",
       amountPeriod: "1시간 기준",
-      temperature: Number(group?.T1H ?? 0),
-      humidity: Number(group?.REH ?? 0),
-      windSpeed: Number(group?.WSD ?? 0),
+      temperature: numberOrNull(group?.T1H),
+      humidity: numberOrNull(group?.REH),
+      windSpeed: numberOrNull(group?.WSD),
       sourceTime: group?.date?.toISOString() || null,
       issuedAt: issuedAt.toISOString(),
       issueAgeMinutes: Math.max(0, Math.round((now.getTime() - issuedAt.getTime()) / 60_000)),
@@ -556,17 +620,17 @@ async function getKmaVilageForecastSet(serviceKey, route, minutesList, now = new
     return minutesList.map((minutes) => {
       const target = new Date(now.getTime() + minutes * 60_000);
       const group = nearestForecast(groups, target);
-      if (!group) return null;
+      if (!group || group.targetDiffMinutes > 45) return null;
       const previousGroup = nearestForecast(groups, new Date(target.getTime() - 60 * 60_000));
       const nextGroup = nearestForecast(groups, new Date(target.getTime() + 60 * 60_000));
       const mm = parseRainMm(group.PCP);
       const level = rainLevel(mm, group.PTY);
       return {
-        minutes, rain: level !== "none", level, mm,
+        minutes, rain: !["none", "unknown"].includes(level), level, mm, precipitationType: numberOrNull(group.PTY), unavailable: mm == null,
         amountText: mm > 0 ? String(group.PCP || `${mm} mm`) : "0 mm",
         amountPeriod: "1시간 기준",
-        temperature: Number(group.TMP ?? 0), humidity: Number(group.REH ?? 0), windSpeed: Number(group.WSD ?? 0),
-        probability: Number(group.POP ?? 0), probabilitySource: "단기예보", sourceTime: group.date?.toISOString() || null,
+        temperature: numberOrNull(group.TMP), humidity: numberOrNull(group.REH), windSpeed: numberOrNull(group.WSD),
+        probability: numberOrNull(group.POP), probabilitySource: "단기예보", sourceTime: group.date?.toISOString() || null,
         issuedAt: issuedAt.toISOString(),
         issueAgeMinutes: Math.max(0, Math.round((now.getTime() - issuedAt.getTime()) / 60_000)),
         targetDiffMinutes: group.targetDiffMinutes,
@@ -662,7 +726,7 @@ async function getMultiModelForecast(route, minutesList, now = new Date(), cache
   return minutesList.map((minutes) => {
     const target = new Date(now.getTime() + minutes * 60_000);
     const index = nearestIndex(target);
-    if (index < 0) return null;
+    if (index < 0 || Math.abs(times[index].getTime()-target.getTime()) > 45*60000) return null;
     const numeric = (value) => value == null || value === "" ? null : Number(value);
     const values = models.map((model) => {
       const probability = numeric(hourly[model.probability]?.[index]);
@@ -700,66 +764,22 @@ async function getMultiModelForecast(route, minutesList, now = new Date(), cache
   }).filter(Boolean);
 }
 
-function assessRunForecast(item, recentConditions) {
-  const model = item.multiModel || {};
-  const probabilityInputs = [
-    item.probability, item.nextHourProbability,
-    ...((model.models || []).flatMap((entry) => [entry.probability, entry.nextProbability])),
-  ].filter(Number.isFinite);
-  const combinedRisk = roundToFive(average(probabilityInputs));
-  const kmaAmount = Number.isFinite(item.villageMm) ? item.villageMm : item.mm;
-  const expectedAmount = median([kmaAmount, model.amountMedian]);
-  const previousAmount = Math.max(item.previousHourMm || 0, model.previousAmountMedian || 0);
-  const nextAmount = Math.max(item.nextHourMm || 0, model.nextAmountMedian || 0);
-  const windowPeak = Math.max(expectedAmount || 0, nextAmount);
-  const recentHeavy = Boolean(recentConditions && (recentConditions.recentMaxMm >= 5 || recentConditions.recentTotalMm >= 8));
-  const recentWet = Boolean(recentConditions && recentConditions.recentTotalMm >= 1);
-  const observationStillRelevant = item.minutes <= 180;
-  const easingFromHeavy = previousAmount >= 3 && (expectedAmount || 0) <= 1;
-  const recoveringSurface = easingFromHeavy || (observationStillRelevant && recentHeavy && (expectedAmount || 0) <= 1);
-  const wetSurface = previousAmount >= 0.5 || (observationStillRelevant && recentWet);
-  const probabilitySpread = Number.isFinite(model.probabilityMin) && Number.isFinite(model.probabilityMax)
-    ? model.probabilityMax - model.probabilityMin : null;
-  const voteRatio = model.availableModels ? model.wetVotes / model.availableModels : null;
-  const disagreement = (Number.isFinite(probabilitySpread) && probabilitySpread >= 40)
-    || (Number.isFinite(voteRatio) && voteRatio >= 0.25 && voteRatio <= 0.75);
-  const drizzle = (expectedAmount || 0) <= 1 && windowPeak <= 1.5;
-  const noticeableRain = windowPeak > 1.5 && windowPeak < 3;
-  const moderateRain = windowPeak >= 3 && windowPeak < 5;
-  const uncomfortableRain = windowPeak >= 5;
-  const lowToModerateChance = !Number.isFinite(combinedRisk) || combinedRisk <= 70;
-  const officialChance = Number.isFinite(item.probability) ? `기상청 강수확률 ${item.probability}%` : "여러 예보 종합";
-
-  let level, label, reason;
-  if (recoveringSurface) {
-    level = "avoid"; label = "비는 약해져도 노면 때문에 비추천";
-    reason = `직전 시간 강수가 최대 ${previousAmount.toFixed(1)}mm로 예상되어 미끄러운 구간과 물웅덩이가 남을 수 있습니다.`;
-  } else if (drizzle && lowToModerateChance && !wetSurface) {
-    level = "go"; label = (expectedAmount || 0) >= 0.2 ? "이슬비 감수 시 1시간 러닝 가능" : "1시간 러닝 무난";
-    reason = `${officialChance} · 시간당 강수량은 ${expectedAmount && expectedAmount > 0 ? `${expectedAmount.toFixed(1)}mm 안팎` : "거의 없는 수준"}으로 예상됩니다.`;
-  } else if (drizzle && lowToModerateChance && wetSurface) {
-    level = "caution"; label = "비는 약하지만 노면 주의";
-    reason = "강수량은 적어도 직전 비로 노면이 젖어 있을 가능성이 있어 짧은 코스가 낫습니다.";
-  } else if (uncomfortableRain || (moderateRain && ((combinedRisk || 0) >= 50 || wetSurface))) {
-    level = "avoid"; label = "강수 가능성 높음 · 미루기";
-    reason = `${officialChance} · 러닝 시간대 강수량이 최대 ${windowPeak.toFixed(1)}mm/h로 예상됩니다. 3mm/h부터는 이슬비보다 확실히 젖는 비에 가깝습니다.`;
-  } else if (noticeableRain || moderateRain) {
-    level = "caution"; label = moderateRain ? "젖는 비 가능 · 짧은 코스 권장" : "젖어도 괜찮다면 러닝 가능";
-    reason = `러닝 시간대 강수량이 최대 ${windowPeak.toFixed(1)}mm/h로 예상됩니다. ${moderateRain ? "3mm/h 이상이면 옷과 신발이 눈에 띄게 젖을 수 있습니다." : "1mm/h를 넘으면 이슬비보다 체감되는 약한 비에 가깝습니다."}`;
-  } else if ((combinedRisk || 0) >= 70) {
-    level = "caution"; label = "강수 확률 높음 · 출발 전 재확인";
-    reason = `${officialChance}은 높지만 예상 강수량은 1mm/h 안팎입니다. 강수 영상과 노면 상태를 출발 직전에 다시 확인하세요.`;
-  } else {
-    level = "caution"; label = disagreement ? "모델 전망 엇갈림 · 출발 전 재확인" : "짧은 코스로 준비";
-    reason = disagreement ? "예보모델 간 강수 위치나 확률 차이가 커서 단일 숫자보다 출발 직전 갱신이 중요합니다." : "약한 비 이상의 가능성이 있어 우회 가능한 짧은 코스가 안전합니다.";
-  }
+export function assessRunForecast(item, recentConditions) {
+  if (item.unavailable || item.source === "demo") return {
+    level: "unknown", reasonCode: "unavailable", headline: "자료가 부족해 판단하기 어려워요",
+    label: "자료가 부족해 판단하기 어려워요", reason: "자료가 부족해 판단하기 어려워요",
+    expectedAmount: null, combinedRisk: null, windowPeak: null, surface: "unknown",
+  };
+  const metrics = runSampleMetrics(item, recentConditions);
+  // Keep the long-standing point API (go/caution/avoid) while deriving its
+  // verdict from the same classifier used by full run windows.
+  const evaluated = evaluateRunWindow([{ ...item, runAssessment: metrics }]);
+  const decision = evaluated.decision;
+  const level = decision.level === "red" ? "avoid" : decision.level === "yellow" ? "caution" : decision.level === "green" ? "go" : "unknown";
   return {
-    level, label, reason, combinedRisk,
-    expectedAmount: Number.isFinite(expectedAmount) ? Math.round(expectedAmount * 10) / 10 : null,
-    previousAmount: Math.round(previousAmount * 10) / 10,
-    windowPeak: Math.round(windowPeak * 10) / 10,
-    surface: recoveringSurface ? "recovering" : wetSurface ? "wet" : "dry",
-    disagreement,
+    ...metrics,
+    level, label: decision.headline, headline: decision.headline, reasonCode: decision.reasonCode,
+    reason: decision.reason, combinedRisk: metrics.chance, windowPeak: metrics.expectedAmount,
   };
 }
 
@@ -792,13 +812,42 @@ function haversine(lat1, lon1, lat2, lon2) {
 }
 
 function chooseDirectionalCctv(cameras) {
-  const sectors = ["남", "남서", "서", "북서", "북", "북동", "동", "남동"];
-  const picks = [];
-  for (const sector of sectors) {
-    const camera = cameras.filter((c) => c.sector === sector).sort((a, b) => a.distance - b.distance)[0];
-    if (camera) picks.push(camera);
+  // 러닝 본문은 가까운 카메라부터 보여 줍니다. 동률은 API에서 정한 안정적인 좌표 ID로 정렬합니다.
+  return cameras.slice().sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id)).slice(0, 8);
+}
+
+function itsResponseError(message = "ITS CCTV 응답 오류") {
+  const error = new Error(message);
+  error.code = "ITS_INVALID_RESPONSE";
+  return error;
+}
+
+export function parseItsCctvResponse(text) {
+  const source=String(text || "").trim();
+  if (!source) throw itsResponseError("ITS CCTV 응답이 비어 있습니다.");
+  try {
+    const json=JSON.parse(source), response=json?.response;
+    if (!response || typeof response !== "object") throw itsResponseError("ITS CCTV JSON 형식을 확인하지 못했습니다.");
+    const errorMessage=response.error || response.errorMessage || response.message;
+    if (errorMessage || String(response.resultCode || "") === "000") throw itsResponseError(`ITS CCTV 오류: ${errorMessage || response.resultMsg || "System error"}`);
+    if (Array.isArray(response.data)) return response.data;
+    if (String(response.datacount ?? "") === "0" && (response.data == null)) return [];
+    throw itsResponseError("ITS CCTV 목록 형식을 확인하지 못했습니다.");
+  } catch (error) {
+    if (error?.code === "ITS_INVALID_RESPONSE") throw error;
   }
-  return picks.slice(0, 8);
+  if (!/<(?:\w+:)?response\b/i.test(source) || /<html\b|<title\b/i.test(source)) throw itsResponseError("ITS CCTV 응답 형식을 확인하지 못했습니다.");
+  const resultCode=parseXmlTag(source,"resultCode"), resultMessage=parseXmlTag(source,"resultMsg") || parseXmlTag(source,"message");
+  if (resultCode === "000" || /(?:error|인증|system)/i.test(resultMessage)) throw itsResponseError(`ITS CCTV 오류: ${resultMessage || "System error"}`);
+  const raw=[...source.matchAll(/<data>([\s\S]*?)<\/data>/gi)].map((match) => ({
+    cctvname: parseXmlTag(match[1], "cctvname"),
+    coordx: parseXmlTag(match[1], "coordx"), coordy: parseXmlTag(match[1], "coordy"),
+    cctvurl: parseXmlTag(match[1], "cctvurl"), cctvformat: parseXmlTag(match[1], "cctvformat"),
+    cctvtype: parseXmlTag(match[1], "cctvtype"),
+  }));
+  if (raw.length) return raw;
+  if (parseXmlTag(source,"datacount") === "0") return [];
+  throw itsResponseError("ITS CCTV 목록 형식을 확인하지 못했습니다.");
 }
 
 async function getItsCctv(apiKey, target, cacheTrace = []) {
@@ -809,28 +858,17 @@ async function getItsCctv(apiKey, target, cacheTrace = []) {
     getType: "json",
   });
   const location = `bbox${(target.lon - .55).toFixed(3)},${(target.lat - .42).toFixed(3)},${(target.lon + .55).toFixed(3)},${(target.lat + .42).toFixed(3)}`;
-  const text = await cachedRawLoad(buildRawCacheKey({
+  const raw = await cachedRawLoad(buildRawCacheKey({
     provider: "its", dataset: "cctv-info", location, cycle: "live", variant: "type-all-cctv3-jsonxml",
-  }), () => httpsGetText(`https://openapi.its.go.kr:9443/cctvInfo?${params}`, {
+  }), async () => parseItsCctvResponse(await httpsGetText(`https://openapi.its.go.kr:9443/cctvInfo?${params}`, {
     timeout: 12_000,
     headers: { "User-Agent": "RunCast-Jamsil/0.1 local-dashboard", Accept: "application/json, application/xml" },
-  }), { trace: cacheTrace, freshMs: 25_000, staleMs: 45_000, failureMs: 20_000 });
-  let raw = [];
-  try {
-    const json = JSON.parse(text);
-    raw = json?.response?.data || [];
-  } catch {
-    raw = [...text.matchAll(/<data>([\s\S]*?)<\/data>/gi)].map((match) => ({
-      cctvname: parseXmlTag(match[1], "cctvname"),
-      coordx: parseXmlTag(match[1], "coordx"), coordy: parseXmlTag(match[1], "coordy"),
-      cctvurl: parseXmlTag(match[1], "cctvurl"), cctvformat: parseXmlTag(match[1], "cctvformat"),
-      cctvtype: parseXmlTag(match[1], "cctvtype"),
-    }));
-  }
-  const cameras = raw.map((item) => normalizeCctv(item, target)).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon) && c.url);
+  })), { trace: cacheTrace, freshMs: 25_000, staleMs: 45_000, failureMs: 20_000 });
+  const cameras = raw.map((item) => normalizeCctv(item, target)).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon) && c.url && c.distance <= 15);
   const chosen = chooseDirectionalCctv(cameras);
   for (const camera of chosen) knownCctvUrls.add(camera.url);
-  return chosen;
+  const event=cacheTrace.filter(item=>item.provider === "its" && item.dataset === "cctv-info" && (item.fetchedAt || item.retryAt)).at(-1);
+  return { cameras: chosen, cache: event ? { fetchedAt:event.fetchedAt || null, usableUntil:event.staleUntil || null, retryAt:event.retryAt || null, stale:Boolean(event.stale || ["stale-if-error","stale-cooldown"].includes(event.state)) } : null };
 }
 
 async function getAviation(cacheTrace = []) {
@@ -857,48 +895,8 @@ async function getAviation(cacheTrace = []) {
   };
 }
 
-function demoForecast() {
-  return [
-    { minutes: 30, rain: false, level: "none", mm: 0, amountText: "0 mm", amountPeriod: "1시간 기준", probability: 10, temperature: 24, humidity: 72, windSpeed: 2.1 },
-    { minutes: 60, rain: true, level: "light", mm: 0.5, amountText: "1 mm 미만", amountPeriod: "1시간 기준", probability: 40, temperature: 23, humidity: 81, windSpeed: 2.8 },
-    { minutes: 180, rain: true, level: "moderate", mm: 2, amountText: "2 mm", amountPeriod: "1시간 기준", probability: 70, temperature: 22, humidity: 88, windSpeed: 3.4 },
-    { minutes: 360, rain: false, level: "none", mm: 0, amountText: "0 mm", amountPeriod: "1시간 기준", probability: 20, temperature: 23, humidity: 76, windSpeed: 2.0 },
-    { minutes: 540, rain: false, level: "none", mm: 0, amountText: "0 mm", amountPeriod: "1시간 기준", temperature: 22, humidity: 78, windSpeed: 1.8, probability: 20, source: "village", sourceLabel: "단기예보 샘플" },
-  ];
-}
-
 function makeDecisionForRunWindow(runWindow, cctvs = []) {
-  const activeUpstream = cctvs.filter((c) => ["남", "남서", "서"].includes(c.sector) && c.rainNow === "yes" && c.cameraUsable !== false && c.confidence >= 0.65);
-  // AI가 실제로 분석한, 신뢰 가능한 젖은 노면만 반영합니다. unknown은 절대 관측값이 아닙니다.
-  const reliableWetSurface = cctvs.filter((c) => ["yes", "no", "uncertain"].includes(c.rainNow) && c.cameraUsable !== false && c.confidence >= 0.65 && c.roadWet === true);
-  const avoid = runWindow.find((item) => item.runAssessment?.level === "avoid");
-  const caution = runWindow.find((item) => item.runAssessment?.level === "caution");
-  if (avoid || activeUpstream.length >= 2) {
-    return {
-      level: "red", label: "1시간 러닝은 미루는 편이 좋아요", short: "미루기",
-      confidence: avoid && activeUpstream.length ? 88 : 76,
-      reason: avoid
-        ? avoid.runAssessment.reason
-        : "남쪽 접근 경로 CCTV 두 곳 이상에서 현재 강수가 확인됩니다.",
-    };
-  }
-  if (activeUpstream.length === 1 || caution) {
-    return { level: "yellow", label: caution?.runAssessment?.label || "1시간 대신 짧은 코스를 권장해요", short: "짧게", confidence: 67, reason: caution?.runAssessment?.reason || "접근 방향의 약한 비 신호가 있어 짧은 코스가 안전합니다." };
-  }
-  if (reliableWetSurface.length >= 2) {
-    return { level: "yellow", label: "비는 안 보여도 노면이 젖어 있어요", short: "노면 주의", confidence: 70, reason: `분석한 CCTV ${reliableWetSurface.length}곳에서 젖은 노면이 확인됐어요. 비가 약해도 미끄러운 구간과 물웅덩이를 주의하세요.` };
-  }
-  const lightButRunnable = runWindow.find((item) => item.runAssessment?.level === "go" && (item.runAssessment?.combinedRisk || 0) >= 45);
-  if (lightButRunnable) return {
-    level: "green", label: "이슬비 감수 시 1시간 러닝 가능", short: "출발",
-    confidence: 70, reason: lightButRunnable.runAssessment.reason,
-  };
-  return {
-    level: "green", label: "지금 나가도 괜찮아요", short: "출발",
-    // 데스크톱의 기존 표시 호환값입니다. 모바일은 이 숫자를 노출하지 않습니다.
-    confidence: 68,
-    reason: "러닝 시간대 예보와 최근 강수를 기준으로 판단했어요. CCTV 영상 목록은 분석을 마치기 전까지 판단에 반영하지 않습니다.",
-  };
+  return evaluateRunWindow(runWindow, cctvs).decision;
 }
 
 export function makeDecision(forecast, cctvs = []) {
@@ -911,24 +909,7 @@ export function makeDecision(forecast, cctvs = []) {
  * 1시간 동안의 예상 누적량을 보수적으로 근사하고 최대 시간당 강수량도 별도 제공합니다.
  */
 export function summarizeRunWindow(samples = []) {
-  const amounts = samples.map((item) => item?.runAssessment?.expectedAmount).map(Number).filter(Number.isFinite);
-  const officialProbabilities = samples.map((item) => item?.probability).map(Number).filter(Number.isFinite);
-  // 통합 위험도가 공식 POP보다 낮더라도 사용자에게 더 낮은 확률로 보이지 않게 둘 다 반영합니다.
-  const risks = samples.flatMap((item) => [item?.runAssessment?.combinedRisk, item?.probability]).map(Number).filter(Number.isFinite);
-  const surfaces = samples.map((item) => item?.runAssessment?.surface || "dry");
-  const start = Number(samples[0]?.runAssessment?.expectedAmount ?? samples[0]?.mm ?? 0) || 0;
-  const middle = Number(samples[1]?.runAssessment?.expectedAmount ?? samples[1]?.mm ?? start) || 0;
-  const end = Number(samples[2]?.runAssessment?.expectedAmount ?? samples[2]?.mm ?? middle) || 0;
-  // 30분 간격 3점의 사다리꼴 적분. 각 값은 mm/h로 취급합니다.
-  const estimatedAmount = Math.round((start * .25 + middle * .5 + end * .25) * 10) / 10;
-  const peakAmount = amounts.length ? Math.round(Math.max(...amounts) * 10) / 10 : null;
-  const probabilityMax = risks.length ? roundToFive(Math.max(...risks)) : null;
-  const probabilityAverage = risks.length ? roundToFive(average(risks)) : null;
-  const surface = surfaces.includes("recovering") ? "recovering" : surfaces.includes("wet") ? "wet" : "dry";
-  const levels = samples.map((item) => item?.runAssessment?.level);
-  const worstLevel = levels.includes("avoid") ? "avoid" : levels.includes("caution") ? "caution" : "go";
-  const officialProbabilityMax = officialProbabilities.length ? roundToFive(Math.max(...officialProbabilities)) : null;
-  return { estimatedAmount, peakAmount, probabilityMax, probabilityAverage, officialProbabilityMax, surface, worstLevel, sampleCount: samples.length };
+  return evaluateRunWindow(samples).summary;
 }
 
 function makeRunModes(plans, forecast, now = new Date()) {
@@ -942,8 +923,9 @@ function makeRunModes(plans, forecast, now = new Date()) {
       // 조회는 가장 가까운 분 단위로 하지만 화면 시간은 사용자가 고른 정확한 출발 시각을 씁니다.
       return { ...item, phase: index === 0 ? "출발" : index === 1 ? "30분" : "복귀", at: new Date(plan.startAt.getTime() + index * 30 * 60_000).toISOString() };
     });
-    const decision = makeDecisionForRunWindow(samples, []);
-    const summary = summarizeRunWindow(samples);
+    const evaluated = evaluateRunWindow(samples, [], { requireSamples: 3 });
+    const decision = evaluated.decision;
+    const summary = evaluated.summary;
     const withinMapHorizon = plan.startMinutes <= 540;
     return {
       id: plan.id, label: plan.label, detailLabel: plan.detailLabel, immediate: plan.immediate,
@@ -959,7 +941,7 @@ function radarSummary(keys, demo) {
   return {
     configured: Boolean(activeRadarKey),
     direction: "남서 → 북동",
-    etaMinutes: demo ? 42 : null,
+    etaMinutes: null,
     imageUrl: activeRadarKey ? `/api/radar?minutes=30&v=${Date.now()}` : null,
     frameStepMinutes: 5,
     maxMapleMinutes: 60,
@@ -976,8 +958,43 @@ function radarSummary(keys, demo) {
   };
 }
 
+function oldestForecastFetch(trace) {
+  const dates = trace.filter(t => t.provider === "kma" && ["ultra-srt-fcst", "village-fcst"].includes(t.dataset) && ["stored", "fresh-hit", "stale-if-error", "stale-cooldown", "coalesced-result"].includes(t.state)).map(t => t.fetchedAt).filter(Boolean).sort();
+  return dates[0] || null;
+}
+
+function refreshMetadata(trace = []) {
+  const retryStates = ["stale-if-error", "stale-cooldown", "negative-hit"];
+  const relevant = trace.filter(event => event?.stale || retryStates.includes(event?.state) || event?.retryAt);
+  const retryValues = relevant.map(event => Date.parse(event.retryAt || "")).filter(Number.isFinite);
+  return {
+    stale: relevant.some(event => event?.stale || ["stale-if-error", "stale-cooldown"].includes(event?.state)),
+    retryAt: retryValues.length ? new Date(Math.max(...retryValues)).toISOString() : null,
+  };
+}
+
+async function weeklyForecast(body) {
+  const location = resolveLocation(body), trace = [];
+  const params = new URLSearchParams({
+    latitude: String(location.lat), longitude: String(location.lon), timezone: "Asia/Seoul", forecast_days: "8", wind_speed_unit: "ms",
+    hourly: "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code",
+    daily: "temperature_2m_min,temperature_2m_max,weather_code",
+  });
+  // Eighth day's midnight provides the return sample for day seven at 23:00.
+  const payload = await cachedRawLoad(buildRawCacheKey({ provider: "open-meteo", dataset: "weekly", location: `${location.lat},${location.lon}`, cycle: kstDateKey(new Date()), variant: "v1-8d-ms" }), async () => {
+    const data = await fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, { timeout: 15000 });
+    normalizeWeekly(data, location, new Date().toISOString());
+    return data;
+  }, { trace, freshMs: 30*60000, staleMs: 7*86400000 });
+  const entry = trace.filter(t => t.fetchedAt).at(-1);
+  if (!entry) throw new Error("예보 조회 시각을 확인하지 못했습니다.");
+  const normalized = normalizeWeekly(payload, location, entry.fetchedAt);
+  const refresh = refreshMetadata(trace);
+  return { ...normalized, refresh, cache: { stale: refresh.stale, retryAt: refresh.retryAt } };
+}
+
 async function mobileForecast(body) {
-  const route = ROUTES[body.route] || ROUTES.seokchon;
+  const route = resolveLocation(body);
   const keys = effectiveKeys(body.keys);
   activeRadarKey = String(keys.kmaHubKey || "").trim();
   if (!activeRadarKey) radarCache.clear();
@@ -995,19 +1012,17 @@ async function mobileForecast(body) {
     catch (error) { errors.push(`기상청: ${error.message}`); }
   }
   if (!forecast) {
-    // 키가 없을 때도 화면 형식은 유지하되, 예약 시각을 9시간 값으로 대체하지 않습니다.
-    const demoByMinutes = new Map(demoForecast().map((item) => [item.minutes, item]));
-    forecast = requestedMinutes.map((minutes) => demoByMinutes.get(minutes) || {
-      minutes, rain: false, level: "unknown", mm: 0, probability: null,
-      amountText: "자료 없음", source: "demo", sourceLabel: "예보 키 없음", unavailable: true,
-    });
-    demo = true;
+    forecast = requestedMinutes.map(minutes => ({
+      minutes, rain: false, level: "unknown", mm: null, probability: null,
+      temperature: null, humidity: null, windSpeed: null,
+      amountText: "자료 없음", source: "unavailable", sourceLabel: "예보 없음", unavailable: true,
+    }));
   }
 
   let recentConditions = null, multiModelForecast = [];
   const contextResults = await Promise.allSettled([
     keys.kmaServiceKey ? getKmaRecentConditions(keys.kmaServiceKey, route, now, cacheTrace) : Promise.resolve(null),
-    getMultiModelForecast(route, forecast.map((item) => item.minutes), now, cacheTrace),
+    forecast.some(item => !item.unavailable) ? getMultiModelForecast(route, forecast.map((item) => item.minutes), now, cacheTrace) : Promise.resolve([]),
   ]);
   if (contextResults[0].status === "fulfilled") recentConditions = contextResults[0].value;
   else errors.push(`최근 실황: ${contextResults[0].reason?.message || "조회 실패"}`);
@@ -1023,38 +1038,47 @@ async function mobileForecast(body) {
   // 기존 지도/데스크톱 계약은 현재 기준의 지도 시간축만 유지합니다.
   // 예약 러닝의 절대 시각 샘플은 runModes 아래로 별도 전달합니다.
   const mapForecast = mapMinutes.map((minutes) => forecast.find((item) => item.minutes === minutes)).filter(Boolean);
+  const refresh = { ...refreshMetadata(cacheTrace), failed: !forecast.some(item => !item.unavailable) };
   const payload = {
-    generatedAt: now.toISOString(), route, forecast: mapForecast, runModes, recentConditions,
+    generatedAt: now.toISOString(), dataUpdatedAt: oldestForecastFetch(cacheTrace), route, forecast: mapForecast, runModes, recentConditions,
     cctvs: [], cctv: { configured: Boolean(keys.itsApiKey), available: false, included: false }, aviation: { metar: [], taf: [] },
     decision: makeDecision(mapForecast, []), demo, errors,
     radar: radarSummary(keys, demo),
-    cache: { cached: false, ageSeconds: 0, scope: "ui-recomputed" },
+    refresh,
+    cache: { cached: false, ageSeconds: 0, scope: "ui-recomputed", stale: refresh.stale, failed: refresh.failed, retryAt: refresh.retryAt },
     cacheDiagnostics: cacheSummary(cacheTrace),
   };
   return payload;
 }
 
 async function mobileContext(body) {
-  const route = ROUTES[body.route] || ROUTES.seokchon;
+  const route = resolveLocation(body);
   const keys = effectiveKeys(body.keys);
   const cacheTrace = [];
   const errors = [];
   // CCTV와 항공기상은 첫 판단과 독립적이므로 병렬·후속으로 조회합니다.
   const [cctvResult, aviationResult] = await Promise.allSettled([
-    keys.itsApiKey ? getItsCctv(keys.itsApiKey, route, cacheTrace) : Promise.resolve([]),
-    getAviation(cacheTrace),
+    keys.itsApiKey ? getItsCctv(keys.itsApiKey, route, cacheTrace) : Promise.resolve({ cameras: [], cache: null }),
+    haversine(route.lat, route.lon, 37.5082, 127.1001) <= 65 ? getAviation(cacheTrace) : Promise.resolve({ metar: [], taf: [] }),
   ]);
-  const cctvs = cctvResult.status === "fulfilled" ? cctvResult.value : [];
+  const cctvEvent = cacheTrace.filter(item => item.provider === "its" && item.dataset === "cctv-info" && (item.fetchedAt || item.retryAt)).at(-1);
+  const cctvPayload = cctvResult.status === "fulfilled" ? cctvResult.value : { cameras: [], cache: cctvEvent ? { fetchedAt: cctvEvent.fetchedAt || null, usableUntil: cctvEvent.staleUntil || null, retryAt: cctvEvent.retryAt || null, stale: Boolean(cctvEvent.stale || ["stale-if-error", "stale-cooldown"].includes(cctvEvent.state)) } : null };
+  const cctvs = cctvPayload.cameras;
   if (cctvResult.status === "rejected") errors.push(`CCTV: ${cctvResult.reason?.message || "조회 실패"}`);
   const cctv = {
     configured: Boolean(keys.itsApiKey),
     available: cctvs.length > 0,
     // 목록이 존재해도 AI 관측 전에는 비가 없다는 근거가 아닙니다.
     included: cctvs.some((camera) => ["yes", "no", "uncertain"].includes(camera.rainNow)),
+    fetchedAt: cctvPayload.cache?.fetchedAt || null,
+    usableUntil: cctvPayload.cache?.usableUntil || null,
+    retryAt: cctvPayload.cache?.retryAt || null,
+    stale: Boolean(cctvPayload.cache?.stale),
   };
   const aviation = aviationResult.status === "fulfilled" ? aviationResult.value : { metar: [], taf: [] };
   if (aviationResult.status === "rejected") errors.push(`METAR/TAF: ${aviationResult.reason?.message || "조회 실패"}`);
-  return { route, cctvs, cctv, aviation, errors, cacheDiagnostics: cacheSummary(cacheTrace) };
+  const refresh = refreshMetadata(cacheTrace);
+  return { route, cctvs, cctv, aviation, errors, refresh: { ...refresh, stale: Boolean(cctv.stale || refresh.stale), retryAt: cctv.retryAt || refresh.retryAt, failed: Boolean(keys.itsApiKey && errors.some(error => String(error).startsWith("CCTV:"))) }, cacheDiagnostics: cacheSummary(cacheTrace) };
 }
 
 async function snapshot(body) {
@@ -1259,7 +1283,7 @@ async function getStatus() {
 async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
-    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css",
+    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/refresh-scheduler.mjs", "assets/ui-icons.mjs", "sw.js",
     "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/apple-touch-icon-v2.png", "assets/pwa-icon-192.png",
     "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png",
     "assets/apple-startup-1320x2868.png", "assets/apple-startup-1206x2622.png",
@@ -1274,7 +1298,7 @@ async function serveFile(pathname, res) {
   if (!filePath.startsWith(ROOT)) return sendJson(res, 404, { error: "Not found" });
   try {
     const data = await readFile(filePath);
-    const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml" };
+    const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml" };
     res.writeHead(200, { "Content-Type": types[extname(filePath)] || "application/octet-stream", "Cache-Control": "no-cache" });
     res.end(data);
   } catch {
@@ -1299,6 +1323,7 @@ export async function requestHandler(req, res) {
     });
     if (req.method === "GET" && url.pathname === "/api/status") return sendJson(res, 200, await getStatus());
     if (req.method === "GET" && url.pathname === "/api/radar") return await sendRadarGraphic(res, Number(url.searchParams.get("minutes")));
+    if (req.method === "POST" && url.pathname === "/api/weekly-forecast") return sendJson(res, 200, await weeklyForecast(await readJson(req)));
     if (req.method === "POST" && url.pathname === "/api/mobile-forecast") return sendJson(res, 200, await mobileForecast(await readJson(req)));
     if (req.method === "POST" && url.pathname === "/api/mobile-context") return sendJson(res, 200, await mobileContext(await readJson(req)));
     if (req.method === "POST" && url.pathname === "/api/snapshot") return sendJson(res, 200, await snapshot(await readJson(req)));
@@ -1306,7 +1331,16 @@ export async function requestHandler(req, res) {
     if (req.method === "GET") return serveFile(url.pathname, res);
     sendJson(res, 405, { error: "Method not allowed" });
   } catch (error) {
-    sendJson(res, error.statusCode || 500, { error: error.message || "알 수 없는 오류" });
+    const retryAt = Number.isFinite(error?.retryAt)
+      ? new Date(error.retryAt).toISOString()
+      : Number.isFinite(error?.retryAfterMs)
+        ? new Date(Date.now() + error.retryAfterMs).toISOString()
+        : null;
+    sendJson(res, error.statusCode || 500, {
+      error: error.message || "알 수 없는 오류",
+      refresh: { stale: false, retryAt, failed: true },
+      cache: { retryAt },
+    });
   }
 }
 
