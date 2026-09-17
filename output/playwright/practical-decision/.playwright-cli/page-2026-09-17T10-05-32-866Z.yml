@@ -1,0 +1,74 @@
+- generic [active] [ref=f4e1]:
+  - generic [ref=f4e2]:
+    - banner [ref=f4e3]:
+      - img "RunCast" [ref=f4e4]: RC
+      - button "석촌호수" [ref=f4e5] [cursor=pointer]
+      - button "활성 화면 새로고침" [ref=f4e9] [cursor=pointer]
+      - button "더 보기" [ref=f4e15] [cursor=pointer]
+    - main [ref=f4e20]:
+      - region "러닝 판단" [ref=f4e21]:
+        - paragraph [ref=f4e22]: 자료 갱신 · 눈·비 19:03 · 기온 19:05
+        - generic [ref=f4e23]:
+          - region "1시간 러닝 출발 시각 선택" [ref=f4e24]:
+            - tablist "출발 시각" [ref=f4e25]:
+              - tab "지금 주의" [selected] [ref=f4e26] [cursor=pointer]:
+                - generic [ref=f4e27]: 지금
+                - generic [ref=f4e28]: 주의
+          - article [ref=f4e29]:
+            - paragraph [ref=f4e30]: 9. 17. (목) 19:03–20:03 · 1시간
+            - heading "비 올 가능성이 있어요" [level=1] [ref=f4e36]
+            - generic [ref=f4e37]:
+              - generic [ref=f4e38]:
+                - generic [ref=f4e39]:
+                  - generic [ref=f4e40]: 출발 기온
+                  - generic [ref=f4e41]: —
+                  - generic [ref=f4e42]: 복귀 자료 없음
+                - generic [ref=f4e43]:
+                  - generic [ref=f4e44]: 강수확률
+                  - generic [ref=f4e45]: 80%
+                - generic [ref=f4e46]:
+                  - generic [ref=f4e47]: 예상 강수량
+                  - generic [ref=f4e48]: 0mm
+              - paragraph [ref=f4e49]: 강수확률이 80%로 비 올 가능성이 있어요.
+            - generic [ref=f4e50]:
+              - button "비구름 보기" [ref=f4e51] [cursor=pointer]
+              - button "CCTV 확인" [ref=f4e54] [cursor=pointer]
+          - region [ref=f4e57]:
+            - heading "판단 근거" [level=2] [ref=f4e58]
+            - generic [ref=f4e59]:
+              - generic "출발부터 복귀까지" [ref=f4e60]:
+                - article [ref=f4e61]:
+                  - generic [ref=f4e62]: 출발
+                  - generic [ref=f4e63]: 19:03
+                  - generic [ref=f4e64]: 80% · 0mm
+                - article [ref=f4e65]:
+                  - generic [ref=f4e66]: 30분
+                  - generic [ref=f4e67]: 19:03
+                  - generic [ref=f4e68]: 80% · 0mm
+                - article [ref=f4e69]:
+                  - generic [ref=f4e70]: 복귀
+                  - generic [ref=f4e71]: 19:03
+                  - generic [ref=f4e72]: 80% · 0mm
+              - generic [ref=f4e73]:
+                - generic [ref=f4e74]:
+                  - generic [ref=f4e75]: 노면
+                  - generic [ref=f4e76]: 최근 강수 자료가 없어 노면을 추정하지 못했어요
+                - generic [ref=f4e77]:
+                  - generic [ref=f4e78]: 다른 예보
+                  - generic [ref=f4e79]: 비교할 다른 예보가 없어요
+              - group [ref=f4e80]:
+                - generic "예보 자세히" [ref=f4e81] [cursor=pointer]
+        - region [ref=f4e84]:
+          - generic [ref=f4e85]:
+            - heading "주변 CCTV" [level=2] [ref=f4e86]
+            - generic [ref=f4e87]: 현재 현장
+          - paragraph [ref=f4e88]: 선택한 위치 주변 15km · 원본 영상은 새 창으로 열려요.
+          - generic [ref=f4e89]: CCTV 연결이 설정되지 않았어요
+        - group [ref=f4e91]:
+          - generic "자료 출처" [ref=f4e92] [cursor=pointer]
+        - paragraph [ref=f4e95]: 눈·비 참고 정보라 기상특보 대신 사용할 수 없어요.
+    - navigation "주요 화면" [ref=f4e96]:
+      - button "러닝" [ref=f4e97] [cursor=pointer]
+      - button "비구름" [ref=f4e102] [cursor=pointer]
+      - button "주간" [ref=f4e108] [cursor=pointer]
+  - status

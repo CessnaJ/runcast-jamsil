@@ -1,6 +1,6 @@
 // Offline app shell only. Weather and third-party maps are never intercepted.
-const CACHE = 'runcast-shell-v5';
-const SHELL = ['/mobile.html','/assets/mobile.css','/assets/mobile.js','/assets/mobile-extra.js','/assets/weather-domain.mjs','/assets/ui-icons.mjs','/manifest.webmanifest','/assets/pwa-icon-192.png','/assets/pwa-icon-512.png'];
+const CACHE = 'runcast-shell-v6';
+const SHELL = ['/mobile.html','/assets/mobile.css','/assets/mobile.js','/assets/mobile-extra.js','/assets/refresh-scheduler.mjs','/assets/weather-domain.mjs','/assets/ui-icons.mjs','/manifest.webmanifest','/assets/pwa-icon-192.png','/assets/pwa-icon-512.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('runcast-shell-')&&k!==CACHE).map(k=>caches.delete(k))))));
 self.addEventListener('fetch',event=>{

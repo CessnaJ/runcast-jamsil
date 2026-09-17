@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ROUTES, resolveLocation, isSupportedLocation, normalizeWeekly, recommendRunningWear, hourlyBucketEpoch, hourlyPointAt, hourlyTemperatureAt, roundTemperature } from '../assets/weather-domain.mjs';
+import { ROUTES, resolveLocation, isSupportedLocation, normalizeWeekly, recommendRunningWear, hourlyBucketEpoch, hourlyPointAt, hourlyTemperatureAt, roundTemperature, evaluateRunWindow } from '../assets/weather-domain.mjs';
 process.env.VERCEL='1';
 const { assessRunForecast, makeDecision, summarizeRunWindow, cachedRawLoad, resetRawCacheForTest, requestHandler, loadLocalKeys, parseItsCctvResponse } = await import('../server.mjs');
 
@@ -52,6 +52,73 @@ test('snow and sleet remain adverse even with trace precipitation',()=>{
     assert.equal(runAssessment.snow,true);
     assert.equal(makeDecision([{...item,runAssessment}]).level,'red');
   }
+});
+
+test('shared run decision keeps amount, chance, surface and legacy samples consistent',()=>{
+  const sample=(mm, probability=0, extra={})=>({mm, probability, ...extra});
+  const window=(mm, probability=0, extra={})=>Array.from({length:3},()=>sample(mm, probability, extra));
+  const verdict=(samples, cctvs=[])=>evaluateRunWindow(samples,cctvs,{requireSamples:3});
+  const cases=[
+    [window(0), 'green', 'low'],
+    [window(0,80), 'yellow', 'probability'],
+    [window(.2), 'green', 'low'],
+    [window(.3), 'green', 'light'],
+    [window(.9), 'green', 'light'],
+    [window(1), 'yellow', 'rain'],
+    [window(2.9), 'yellow', 'rain'],
+    [window(3), 'red', 'rain_heavy'],
+    [window(3,0), 'red', 'rain_heavy'],
+    [window(0,0,{precipitationType:2}), 'red', 'snow'],
+  ];
+  for (const [samples, level, reasonCode] of cases) {
+    const result=verdict(samples);
+    assert.equal(result.decision.level,level);
+    assert.equal(result.decision.reasonCode,reasonCode);
+    assert.equal(result.decision.label,result.decision.headline);
+  }
+  const wet=verdict(window(0,0,{recentConditions:{recentTotalMm:1,recentMaxMm:0}}));
+  assert.equal(wet.decision.reasonCode,'surface');
+  assert.equal(wet.decision.level,'yellow');
+  const disagree=verdict(window(0,0,{multiModel:{models:[{probability:10,amount:0,nextProbability:100,nextAmount:5},{probability:90,amount:0,nextProbability:0,nextAmount:0}]}}));
+  assert.equal(disagree.decision.reasonCode,'uncertain');
+  const nextHourOnly=verdict(window(0,0,{nextHourMm:5,nextHourProbability:100,multiModel:{models:[{probability:0,amount:0,nextProbability:100,nextAmount:5}]}}));
+  assert.equal(nextHourOnly.decision.reasonCode,'low');
+  assert.equal(nextHourOnly.decision.level,'green');
+  const highModelAtReturn=verdict([
+    sample(0,0,{multiModel:{models:[{probability:0,amount:0},{probability:0,amount:0}]}}),
+    sample(0,0,{multiModel:{models:[{probability:0,amount:0},{probability:0,amount:0}]}}),
+    sample(0,0,{multiModel:{models:[{probability:100,amount:0},{probability:100,amount:0}]}}),
+  ]);
+  assert.equal(highModelAtReturn.decision.reasonCode,'probability');
+  assert.equal(highModelAtReturn.summary.modelProbabilityAverage,100);
+  assert.match(highModelAtReturn.decision.reason,/러닝 구간 내 모델 평균 최댓값/);
+  const tinyTrace=verdict(window(.001));
+  assert.equal(tinyTrace.summary.estimatedAmount,0);
+  assert.equal(tinyTrace.decision.reasonCode,'low');
+  const previousOutlier=verdict(window(0,0,{multiModel:{previousAmountMedian:0,models:[{probability:0,amount:0,previousAmount:10},{probability:0,amount:0,previousAmount:0}]}}));
+  assert.equal(previousOutlier.decision.reasonCode,'low');
+  const earlierLightLaterHeavy=verdict([sample(.2),sample(.2),sample(3)]);
+  assert.equal(earlierLightLaterHeavy.decision.reasonCode,'rain_heavy');
+  const cachedOldLevel=verdict(window(0,0,{runAssessment:{level:'avoid',expectedAmount:0}}));
+  assert.equal(cachedOldLevel.decision.reasonCode,'low');
+  const recovery=verdict(window(0,0,{previousHourMm:5,recentConditions:{recentTotalMm:8,recentMaxMm:5}}));
+  assert.equal(recovery.decision.reasonCode,'surface');
+  assert.equal(recovery.decision.level,'yellow');
+  const unknown=verdict([{mm:null,probability:0},{mm:0,probability:0},{mm:0,probability:0}]);
+  assert.equal(unknown.decision.level,'unknown');
+  const demo=verdict(window(0,0,{source:'demo'}));
+  assert.equal(demo.decision.level,'unknown');
+});
+
+test('shared CCTV rules keep approach rain local and require trusted observations',()=>{
+  const samples=Array.from({length:3},()=>({mm:0,probability:0}));
+  const camera=(sector,extra={})=>({sector,rainNow:'yes',cameraUsable:true,confidence:.9,roadWet:false,...extra});
+  assert.equal(evaluateRunWindow(samples,[camera('남')],{requireSamples:3}).decision.reasonCode,'cctv_rain');
+  assert.equal(evaluateRunWindow(samples,[camera('남'),camera('서')],{requireSamples:3}).decision.level,'red');
+  assert.equal(evaluateRunWindow(samples,[camera('북'),camera('동')],{requireSamples:3}).decision.reasonCode,'low');
+  assert.equal(evaluateRunWindow(samples,[camera('남',{confidence:.5})],{requireSamples:3}).decision.reasonCode,'low');
+  const wet=(id)=>({id,rainNow:'no',cameraUsable:true,confidence:.9,roadWet:true});
+  assert.equal(evaluateRunWindow(samples,[wet(1),wet(2)],{requireSamples:3}).decision.reasonCode,'surface_cctv');
 });
 test('weekly data keeps null distinct from zero and contains seven calendar days',()=>{
   const data=normalizeWeekly({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:[0,12],precipitation_probability:[null,0],wind_speed_10m:[null,0]},daily:{time:Array.from({length:8},(_,i)=>`2026-09-${12+i}`)}},ROUTES.seokchon,'2026-09-11T15:00:00Z');

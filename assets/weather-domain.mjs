@@ -104,3 +104,225 @@ export function recommendRunningWear(hourly, startTime, preference = 'normal', n
   if (Number.isFinite(start.precipitation) && start.precipitation > 0) notes.push('비·눈 가능 · 갈아입을 옷 준비');
   return { ...band, low, high, windy, notes, startAt:start.time, endAt:start.endAt };
 }
+
+// Run advice is deliberately kept in this browser/server module so a cached
+// response cannot make the mobile badge, colour, and headline disagree with
+// the API.  These are product heuristics for a one-hour run, not an official
+// weather warning or a medical safety assessment.
+const RUN_SNOW_TYPES = new Set([2, 3, 6, 7]);
+const RUN_APPROACH_SECTORS = new Set(['남', '남서', '서']);
+
+const finiteNonNegative = value => Number.isFinite(value) && value >= 0 ? value : null;
+const finiteProbability = value => Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : null;
+const runMedian = values => {
+  const sorted = values.map(finiteNonNegative).filter(value => value != null).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+const runAverage = values => {
+  const valid = values.map(value => finiteProbability(value)).filter(value => value != null);
+  return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
+};
+const runRoundFive = value => Number.isFinite(value) ? Math.max(0, Math.min(100, Math.round(value / 5) * 5)) : null;
+const runRoundAmount = value => {
+  const numeric = finiteNonNegative(value);
+  if (numeric == null) return null;
+  if (numeric === 0) return 0;
+  return Math.round(numeric * 10) / 10;
+};
+
+function runModelEntries(item) {
+  return Array.isArray(item?.multiModel?.models)
+    ? item.multiModel.models.filter(model => model && typeof model === 'object')
+    : [];
+}
+
+/**
+ * Derive the current-time fields used by both the point assessment and the
+ * run-window classifier.  nextHour* fields and old aggregate spread/vote
+ * fields are intentionally excluded from the decision inputs.
+ */
+export function runSampleMetrics(item = {}, recentConditions = null) {
+  const models = runModelEntries(item);
+  const modelAmounts = models.map(model => model.amount).map(finiteNonNegative).filter(value => value != null);
+  const modelAmountMedian = runMedian(modelAmounts);
+  const officialAmount = finiteNonNegative(Number.isFinite(item.villageMm) ? item.villageMm : item.mm);
+  const fallbackAmount = finiteNonNegative(item?.runAssessment?.expectedAmount);
+  const expectedRaw = officialAmount != null || modelAmountMedian != null
+    ? runMedian([officialAmount, modelAmountMedian])
+    : fallbackAmount;
+  const expectedAmount = runRoundAmount(expectedRaw);
+
+  const modelProbabilities = models.map(model => finiteProbability(model.probability)).filter(value => value != null);
+  const officialProbability = finiteProbability(item.probability);
+  const modelProbabilityAverage = runAverage(modelProbabilities);
+  const chance = [officialProbability, modelProbabilityAverage].filter(value => value != null).length
+    ? Math.max(officialProbability ?? 0, modelProbabilityAverage ?? 0)
+    : null;
+  const previousCandidates = [
+    item.previousHourMm,
+    item?.multiModel?.previousAmountMedian,
+    item?.runAssessment?.previousAmount,
+  ].map(finiteNonNegative).filter(value => value != null);
+  const previousAmount = previousCandidates.length ? Math.max(...previousCandidates) : 0;
+
+  const modelSpread = modelProbabilities.length >= 2
+    ? Math.max(...modelProbabilities) - Math.min(...modelProbabilities)
+    : null;
+  const wetVotes = models.filter(model => {
+    const probability = finiteProbability(model.probability);
+    const amount = finiteNonNegative(model.amount);
+    return (probability != null && probability >= 50) || (amount != null && amount >= 0.2);
+  }).length;
+  const wetVoteRatio = models.length ? wetVotes / models.length : null;
+  const disagreement = (Number.isFinite(modelSpread) && modelSpread >= 40)
+    || (Number.isFinite(wetVoteRatio) && wetVoteRatio >= 0.25 && wetVoteRatio <= 0.75);
+
+  const recent = recentConditions || item?.recentConditions || null;
+  const observationStillRelevant = !Number.isFinite(item.minutes) || item.minutes <= 180;
+  const recentTotal = finiteNonNegative(recent?.recentTotalMm);
+  const recentMax = finiteNonNegative(recent?.recentMaxMm);
+  const recentWet = observationStillRelevant && recentTotal != null && recentTotal >= 1;
+  const recentHeavy = observationStillRelevant && ((recentMax != null && recentMax >= 5) || (recentTotal != null && recentTotal >= 8));
+  const easingFromHeavy = previousAmount >= 3 && (expectedAmount ?? 0) <= 1;
+  const recoveringSurface = easingFromHeavy || (recentHeavy && (expectedAmount ?? 0) <= 1);
+  const wetSurface = previousAmount >= 0.5 || recentWet;
+  const priorSurface = ['recovering', 'wet', 'dry'].includes(item?.runAssessment?.surface) ? item.runAssessment.surface : null;
+  const surface = recoveringSurface ? 'recovering' : wetSurface ? 'wet' : priorSurface || 'dry';
+  const snow = RUN_SNOW_TYPES.has(Number(item.precipitationType)) || item?.runAssessment?.snow === true;
+
+  return {
+    expectedAmount,
+    previousAmount: runRoundAmount(previousAmount) ?? 0,
+    currentModelProbabilities: modelProbabilities,
+    currentModelAmounts: modelAmounts,
+    modelProbabilityAverage,
+    modelSpread,
+    wetVotes,
+    wetVoteRatio,
+    chance,
+    disagreement,
+    recentWet,
+    recentHeavy,
+    recoveringSurface,
+    surface,
+    snow,
+  };
+}
+
+function runWindowAmounts(metrics) {
+  const values = metrics.map(item => item.expectedAmount);
+  if (!values.length || values.some(value => !Number.isFinite(value))) return null;
+  if (values.length === 1) return { estimated: values[0], peak: values[0] };
+  if (values.length === 2) return { estimated: runRoundAmount((values[0] + values[1]) / 2), peak: Math.max(...values) };
+  // Run modes contain departure / 30-minute / return samples.  Keeping this
+  // explicit also preserves the historical one-hour trapezoid contract.
+  const first = values[0], middle = values[1], last = values.at(-1);
+  return { estimated: runRoundAmount(first * 0.25 + middle * 0.5 + last * 0.25), peak: Math.max(...values) };
+}
+
+function runCctvSignals(cctvs) {
+  const cameras = Array.isArray(cctvs) ? cctvs : [];
+  const trustworthy = camera => camera
+    && ['yes', 'no', 'uncertain'].includes(camera.rainNow)
+    && camera.cameraUsable !== false
+    && Number.isFinite(camera.confidence)
+    && camera.confidence >= 0.65;
+  const rainyApproach = cameras.filter(camera => trustworthy(camera)
+    && camera.rainNow === 'yes' && RUN_APPROACH_SECTORS.has(camera.sector));
+  const wetSurface = cameras.filter(camera => trustworthy(camera) && camera.roadWet === true);
+  return { rainyApproach, wetSurface };
+}
+
+function runUnknownDecision(summary = {}) {
+  return {
+    level: 'unknown', reasonCode: 'unavailable', headline: '자료가 부족해 판단하기 어려워요',
+    label: '자료가 부족해 판단하기 어려워요', short: '확인 불가', confidence: 0,
+    reason: '자료가 부족해 판단하기 어려워요', ...summary,
+  };
+}
+
+/**
+ * Shared run-window evaluator. `requireSamples` is 3 for actual run modes;
+ * callers of the legacy makeDecision API may leave it at 0 so one-point
+ * fixtures continue to classify.
+ */
+export function evaluateRunWindow(samples = [], cctvs = [], options = {}) {
+  const list = Array.isArray(samples) ? samples : [];
+  const metrics = list.map(sample => runSampleMetrics(sample));
+  const requiredSamples = Number.isInteger(options.requireSamples) ? options.requireSamples : 0;
+  const amountInfo = runWindowAmounts(metrics);
+  const incomplete = !list.length
+    || (requiredSamples > 0 && list.length < requiredSamples)
+    || list.some((sample, index) => sample?.unavailable || sample?.source === 'demo' || metrics[index].expectedAmount == null);
+  const common = {
+    estimatedAmount: amountInfo?.estimated ?? null,
+    peakAmount: amountInfo?.peak ?? null,
+    runCumulative: amountInfo?.estimated ?? null,
+    runPeak: amountInfo?.peak ?? null,
+    sampleCount: list.length,
+  };
+  if (incomplete) return { decision: runUnknownDecision(common), summary: { ...common, probabilityMax: null, probabilityAverage: null, officialProbabilityMax: null, modelProbabilityAverage: null, modelProbabilityMax: null, surface: 'unknown', worstLevel: 'unknown', disagreement: false, modelDriving: false } };
+
+  const officialProbabilities = list.map(sample => finiteProbability(sample.probability)).filter(value => value != null);
+  const modelProbabilityMeans = metrics.map(metric => metric.modelProbabilityAverage).filter(value => value != null);
+  const modelProbabilityAverage = modelProbabilityMeans.length ? Math.max(...modelProbabilityMeans) : null;
+  const officialProbabilityMaxRaw = officialProbabilities.length ? Math.max(...officialProbabilities) : null;
+  const chance = [officialProbabilityMaxRaw, modelProbabilityAverage].filter(value => value != null).length
+    ? Math.max(officialProbabilityMaxRaw ?? 0, modelProbabilityAverage ?? 0)
+    : null;
+  const disagreement = metrics.some(metric => metric.disagreement);
+  const modelDriving = modelProbabilityAverage != null && (officialProbabilityMaxRaw == null || modelProbabilityAverage > officialProbabilityMaxRaw);
+  const surfaces = metrics.map(metric => metric.surface);
+  const surface = surfaces.includes('recovering') ? 'recovering' : surfaces.includes('wet') ? 'wet' : 'dry';
+  const summary = {
+    ...common,
+    probabilityMax: runRoundFive(chance),
+    probabilityAverage: runRoundFive(chance),
+    officialProbabilityMax: runRoundFive(officialProbabilityMaxRaw),
+    modelProbabilityAverage: runRoundFive(modelProbabilityAverage),
+    modelProbabilityMax: runRoundFive(modelProbabilityAverage),
+    surface,
+    worstLevel: 'green',
+    disagreement,
+    modelDriving,
+  };
+  const { rainyApproach, wetSurface } = runCctvSignals(cctvs);
+  const chanceKnown = Number.isFinite(chance);
+  const peak = amountInfo.peak;
+  const cumulative = amountInfo.estimated;
+  const hasSnow = metrics.some(metric => metric.snow);
+  const surfaceCctv = wetSurface.length >= 2;
+  const reasonForModel = modelDriving
+    ? ` 다른 예보 모델의 러닝 구간 내 모델 평균 최댓값은 ${Math.round(modelProbabilityAverage)}%예요.`
+    : '';
+  let decision;
+  if (hasSnow) {
+    decision = { level: 'red', reasonCode: 'snow', headline: '눈·진눈깨비가 예상돼요', short: '미루기', confidence: 92, reason: '눈·진눈깨비가 예상돼요.' };
+  } else if (peak >= 3 || cumulative >= 3) {
+    decision = { level: 'red', reasonCode: 'rain_heavy', headline: '비가 많아 러닝을 미루는 게 좋아요', short: '미루기', confidence: 90, reason: `러닝 시간대 강수량이 시간당 최대 ${peak}mm, 예상 누적 ${cumulative}mm예요.` };
+  } else if (rainyApproach.length >= 2) {
+    decision = { level: 'red', reasonCode: 'cctv_rain', headline: '주변 CCTV에 비가 보여요', short: '미루기', confidence: 84, reason: `남·남서·서쪽 접근 CCTV ${rainyApproach.length}곳에서 현재 비가 보여요.` };
+  } else if (rainyApproach.length >= 1) {
+    decision = { level: 'yellow', reasonCode: 'cctv_rain', headline: '주변 CCTV에 비가 보여요', short: '주의', confidence: 72, reason: `남·남서·서쪽 접근 CCTV ${rainyApproach.length}곳에서 현재 비가 보여요.` };
+  } else if (peak >= 1 || cumulative >= 1) {
+    decision = { level: 'yellow', reasonCode: 'rain', headline: '비에 젖을 수 있어요', short: '주의', confidence: 70, reason: `러닝 시간대 강수량이 시간당 최대 ${peak}mm, 예상 누적 ${cumulative}mm예요.` };
+  } else if (surface === 'wet' || surface === 'recovering' || surfaceCctv) {
+    const cctvSurface = surfaceCctv;
+    decision = cctvSurface
+      ? { level: 'yellow', reasonCode: 'surface_cctv', headline: 'CCTV에 젖은 노면이 보여요', short: '노면 주의', confidence: 70, reason: `신뢰할 수 있는 CCTV ${wetSurface.length}곳에서 젖은 노면이 보여요.` }
+      : { level: 'yellow', reasonCode: 'surface', headline: '노면이 젖어 있을 수 있어요', short: '노면 주의', confidence: 66, reason: '최근 강수 또는 직전 강수로 노면이 젖어 있을 수 있어요.' };
+  } else if (chanceKnown && chance >= 60) {
+    decision = { level: 'yellow', reasonCode: 'probability', headline: '비 올 가능성이 있어요', short: '가능성', confidence: 64, reason: `강수확률이 ${runRoundFive(chance)}%로 비 올 가능성이 있어요.${reasonForModel}` };
+  } else if (disagreement) {
+    decision = { level: 'yellow', reasonCode: 'uncertain', headline: '예보가 엇갈려요', short: '재확인', confidence: 58, reason: `예보가 엇갈려요. 출발 전에 최신 자료를 확인해 주세요.${reasonForModel}` };
+  } else if (cumulative <= 0.2 && peak <= 0.2) {
+    decision = { level: 'green', reasonCode: 'low', headline: '눈·비 걱정 적어요', short: '무난', confidence: 68, reason: '러닝 시간대 눈·비 걱정이 적어요.' };
+  } else {
+    decision = { level: 'green', reasonCode: 'light', headline: '약한 비가 예상돼요', short: '약한 비', confidence: 60, reason: `러닝 시간대 약한 비가 예상돼요. 예상 누적 ${cumulative}mm예요.${reasonForModel}` };
+  }
+  const level = decision.level === 'red' ? 'red' : decision.level === 'yellow' ? 'yellow' : 'green';
+  summary.worstLevel = level;
+  return { decision: { ...decision, label: decision.headline, ...summary }, summary };
+}
