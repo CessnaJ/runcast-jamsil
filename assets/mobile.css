@@ -407,6 +407,10 @@ input:focus-visible,
   margin-top: 8px;
 }
 .hero-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 44px;
   padding: 8px;
   border: 1px solid #78985b;
@@ -415,6 +419,10 @@ input:focus-visible,
   color: var(--text);
   font-size: 14px;
   font-weight: 600;
+}
+.hero-action .ui-icon {
+  width: 20px;
+  height: 20px;
 }
 .hero-action:hover {
   border-color: var(--mint);
@@ -964,7 +972,7 @@ input:focus-visible,
   right: 12px;
   bottom: 12px;
   z-index: 5;
-  padding: 12px;
+  padding: 8px 10px;
   border: 1px solid rgba(104, 216, 232, .25);
   border-radius: 16px;
   background: rgba(7, 16, 14, .9);
@@ -976,6 +984,7 @@ input:focus-visible,
   justify-content: space-between;
   gap: 8px;
   font-size: 12px;
+  line-height: 1.25;
 }
 .radar-product {
   display: inline-flex;
@@ -998,9 +1007,9 @@ input:focus-visible,
 .radar-controls {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
-  gap: 9px;
+  gap: 8px;
   align-items: center;
-  margin-top: 10px;
+  margin-top: 4px;
 }
 .radar-controls > button {
   width: 44px;
@@ -1011,35 +1020,38 @@ input:focus-visible,
 }
 #radarDots {
   display: flex;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
 }
 #radarDots button {
+  position: relative;
   flex: 1 1 0;
   min-width: 0;
   min-height: 44px;
   padding: 0;
   border: 0;
-  border-radius: 9px;
-  background: linear-gradient(transparent calc(50% - 2px), rgba(255, 255, 255, .13) calc(50% - 2px), rgba(255, 255, 255, .13) calc(50% + 2px), transparent calc(50% + 2px));
-  color: var(--muted);
-  font-size: 12px;
+  background: transparent;
 }
-#radarDots button.loaded {
-  background: rgba(104, 216, 232, .35);
-  color: var(--text);
+#radarDots button::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 99px;
+  background: rgba(255, 255, 255, .2);
 }
-#radarDots button.active {
+#radarDots button.loaded::before {
+  background: rgba(104, 216, 232, .42);
+}
+#radarDots button.active::before {
   background: var(--cyan);
-  color: var(--cyan);
   box-shadow: 0 0 8px rgba(104, 216, 232, .6);
 }
-#radarDots button.failed {
-  border: 1px solid rgba(190, 126, 117, .72);
-  background: rgba(190, 126, 117, .1);
-  color: #e8978d;
+#radarDots button.failed::before {
+  background: #b97069;
 }
 #radarFrameLabel {
   font-size: 12px;
