@@ -31,6 +31,7 @@ const value = (n,unit='',digits=0) => Number.isFinite(n) ? `${n.toFixed(digits)}
 const temperature = n => { const rounded=roundTemperature(n); return rounded == null ? '—' : String(rounded); };
 const temperatureWithUnit = n => `${temperature(n)}°`;
 const amount = n => !Number.isFinite(n) ? '—' : n===0 ? '0' : Number(n.toFixed(2))===0 ? '<0.01' : String(Number(n.toFixed(2)));
+const solarClock = (value, date) => typeof value === 'string' && value.startsWith(`${date}T`) && /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value) ? value.slice(11,16) : '—';
 function applyRetryMetadata(error, payload, response) {
   const bodyRetry = payload?.refresh?.retryAt || payload?.cache?.retryAt;
   const parsedBodyRetry = typeof bodyRetry === 'number' ? bodyRetry : Date.parse(bodyRetry || '');
@@ -58,6 +59,7 @@ export function createExtras(state, hooks) {
   let selectedDay='', selectedTime='', preferredHour=+nextDepartureTime().slice(11,13), showWind=false;
   let pickerMap=null, draft={...state.location}, dialogToken=0, lastDay=kstDay();
   const daySelections = new Map();
+  const solarMigrationAttempts = new Set();
   const persist=()=>{if(!storage.write('runcast.preferences.v1',preferences))hooks.toast('저장 공간을 사용할 수 없어 이번 실행에만 적용돼요');};
   const kstDate=date=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(date));
   const stamp=(date,reference=new Date())=>{
@@ -112,10 +114,12 @@ export function createExtras(state, hooks) {
     if(key!==weeklyKey){++token;pending=null;loading=false;weekly=readForecastCache('weekly',key);weeklyKey=key;publishThermal(weekly?'ready':'idle');renderWeeklyStamp();}
     if(loading&&key===weeklyKey&&pending)return pending;
     if(hooks.canRefresh&&!hooks.canRefresh()){if(weekly){publishThermal(weeklyStatus==='stale'?'stale':'ready');renderWeeklyStamp();}syncBusy();return weekly;}
-    const fresh=weekly&&Date.now()<Date.parse(weekly.expiresAt)&&weekly.daily[0]?.date===kstDay();
+    const upgradeSolar=weekly?.daily?.some(day=>!Object.hasOwn(day,'sunrise')||!Object.hasOwn(day,'sunset'))&&!solarMigrationAttempts.has(key);
+    if(upgradeSolar)solarMigrationAttempts.add(key);
+    const fresh=weekly&&!upgradeSolar&&Date.now()<Date.parse(weekly.expiresAt)&&weekly.daily[0]?.date===kstDay();
     const meta=refreshScheduler.getMeta('weekly',key);
     if(!force&&fresh&&(!meta?.nextEligibleAt||Date.now()<meta.nextEligibleAt)){publishThermal('ready');renderWeeklyStamp();syncBusy();return weekly;}
-    const requestOptions={manual:force,intervalMs:30*60_000,dataAt:weekly?.fetchedAt,expiresAt:weekly?.expiresAt,serverRetryAt:weekly?.refresh?.retryAt||weekly?.cache?.retryAt,fetcher:async({signal})=>{
+    const requestOptions={manual:force||upgradeSolar,intervalMs:30*60_000,dataAt:weekly?.fetchedAt,expiresAt:weekly?.expiresAt,serverRetryAt:weekly?.refresh?.retryAt||weekly?.cache?.retryAt,fetcher:async({signal})=>{
       const response=await fetch('/api/weekly-forecast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:state.location}),signal});
       const data=await response.json();if(!response.ok){const error=Error(data.error||'주간 예보 조회 실패');applyRetryMetadata(error,data,response);throw error;}return data;
     }};
@@ -171,10 +175,12 @@ export function createExtras(state, hooks) {
     const hours=intervals.filter(h=>h.time.startsWith(selectedDay));
     if(!hours.some(h=>h.time===selectedTime))selectedTime=daySelections.get(selectedDay)||hours.find(h=>+h.time.slice(11,13)===preferredHour)?.time||hours[0]?.time;
     if(!hours.some(h=>h.time===selectedTime))selectedTime=hours[0]?.time;
+    const solarDay=days.find(day=>day.date===selectedDay), sunrise=solarClock(solarDay?.sunrise,selectedDay), sunset=solarClock(solarDay?.sunset,selectedDay);
     const cells=(fn)=>hours.map(h=>`<td class="${h.time===selectedTime?'selected-hour':''} ${Date.parse(h.time)<Date.now()?'past-hour':''}">${fn(h)}</td>`).join('');
     const row=(label,fn)=>`<tr><th scope="row">${label}</th>${cells(fn)}</tr>`;
     const windRows=showWind?row('체감 °C',h=>temperatureWithUnit(h.feelsLike))+row('풍속 m/s',h=>value(h.windSpeed,'',1))+row('돌풍 m/s',h=>value(h.gusts,'',1)):'';
     root.innerHTML=`<div class="weekly-temp-guide" aria-label="기온 단위">최저 / 최고 °C</div><div class="day-rail" role="group" aria-label="7일 날짜 선택, 숫자는 최저/최고 기온 °C">${days.map(d=>{const[weatherIcon,label]=weather(d.code);const name=d.date===kstDay()?'오늘':new Intl.DateTimeFormat('ko-KR',{weekday:'short',timeZone:'Asia/Seoul'}).format(new Date(d.date+'T12:00:00+09:00'));return `<button class="day-chip ${selectedDay===d.date?'active':''}" data-day="${d.date}" aria-pressed="${selectedDay===d.date}" aria-label="${d.date} ${name}, ${label}, 최저 ${temperatureWithUnit(d.low)} 최고 ${temperatureWithUnit(d.high)}"><b>${name}</b><small>${+d.date.slice(5,7)}/${+d.date.slice(8)}</small><span aria-hidden="true">${weatherIcon}</span><div>${temperature(d.low)}/${temperature(d.high)}</div></button>`;}).join('')}</div>
+      <div class="sun-times" role="group" aria-label="${selectedDay} 일출과 일몰"><span aria-label="일출 ${sunrise==='—'?'자료 없음':sunrise}">일출 <b>${sunrise}</b></span><span aria-label="일몰 ${sunset==='—'?'자료 없음':sunset}">일몰 <b>${sunset}</b></span></div>
       <section class="hourly-section"><div id="hourlyScroll" class="hourly-scroll" tabindex="0" role="region" aria-label="출발 시각 선택, 시간별 예보, 가로로 스크롤"><table class="hourly-table"><caption class="sr-only">${selectedDay}. 출발 시각을 선택하세요. 강수는 이후 1시간. 기온과 체감 °C, 강수확률 %, 강수량 mm, 풍속과 돌풍 m/s.</caption><thead><tr><th scope="col">출발</th>${hours.map(h=>`<th scope="col" class="${h.time===selectedTime?'selected-hour':''} ${Date.parse(h.time)<Date.now()?'past-hour':''}"><button data-hour="${h.time}" aria-pressed="${h.time===selectedTime}">${+h.time.slice(11,13)}시</button></th>`).join('')}</tr></thead><tbody>${row('기온 °C',h=>`<b>${temperatureWithUnit(h.temperature)}</b>`)}${row('강수확률',h=>value(h.probability,'%'))}${row('강수량 mm',h=>amount(h.precipitation))}${windRows}</tbody></table></div>
       <div class="table-actions"><details id="forecastInfo"><summary id="forecastInfoSummary" aria-label="예보 시간과 단위 안내">${icon('info')}<span>예보 정보</span>${icon('chevron')}</summary><p>선택한 출발 시각부터 1시간의 강수확률·강수량·돌풍을 보여드려요. 정시 사이의 기온은 해당 시간대 예보를 사용해요. — 자료 없음.</p></details><button id="windToggle" class="text-button" aria-expanded="${showWind}">체감·바람 ${showWind?'접기':'더 보기'} ${icon('chevron')}</button></div></section><section id="wearCard" class="wear-card"></section>`;
     root.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{daySelections.set(selectedDay,selectedTime);selectedDay=b.dataset.day;selectedTime=daySelections.get(selectedDay)||'';renderWeekly();root.querySelector(`[data-day="${selectedDay}"]`)?.focus({preventScroll:true});});

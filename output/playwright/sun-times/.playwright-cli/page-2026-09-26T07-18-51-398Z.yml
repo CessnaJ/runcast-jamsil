@@ -1,0 +1,193 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - img "RunCast" [ref=e4]: RC
+      - button "석촌호수" [ref=e5] [cursor=pointer]
+      - button "활성 화면 새로고침" [ref=e52] [cursor=pointer]
+      - button "더 보기" [ref=e10] [cursor=pointer]
+    - main [ref=e15]:
+      - region "주간 예보와 옷차림" [ref=e58]:
+        - paragraph [ref=e59]: 자료 갱신 · 주간 예보 16:18
+        - generic [ref=e60]:
+          - generic "기온 단위" [ref=e271]: 최저 / 최고 °C
+          - group "7일 날짜 선택, 숫자는 최저/최고 기온 °C" [ref=e272]:
+            - button "2026-09-26 오늘, 흐림, 최저 17° 최고 26°" [ref=e273] [cursor=pointer]:
+              - generic [ref=e274]: 오늘
+              - generic [ref=e275]: 9/26
+              - generic [ref=e279]: 17/26
+            - button "2026-09-27 일, 흐림, 최저 16° 최고 26°" [active] [pressed] [ref=e280] [cursor=pointer]:
+              - generic [ref=e281]: 일
+              - generic [ref=e282]: 9/27
+              - generic [ref=e286]: 16/26
+            - button "2026-09-28 월, 흐림, 최저 18° 최고 25°" [ref=e287] [cursor=pointer]:
+              - generic [ref=e288]: 월
+              - generic [ref=e289]: 9/28
+              - generic [ref=e293]: 18/25
+            - button "2026-09-29 화, 흐림, 최저 15° 최고 25°" [ref=e294] [cursor=pointer]:
+              - generic [ref=e295]: 화
+              - generic [ref=e296]: 9/29
+              - generic [ref=e300]: 15/25
+            - button "2026-09-30 수, 비, 최저 14° 최고 25°" [ref=e301] [cursor=pointer]:
+              - generic [ref=e302]: 수
+              - generic [ref=e303]: 9/30
+              - generic [ref=e308]: 14/25
+            - button "2026-10-01 목, 맑음, 최저 12° 최고 21°" [ref=e309] [cursor=pointer]:
+              - generic [ref=e310]: 목
+              - generic [ref=e311]: 10/1
+              - generic [ref=e316]: 12/21
+            - button "2026-10-02 금, 흐림, 최저 10° 최고 20°" [ref=e317] [cursor=pointer]:
+              - generic [ref=e318]: 금
+              - generic [ref=e319]: 10/2
+              - generic [ref=e323]: 10/20
+          - group "2026-09-27 일출과 일몰" [ref=e324]:
+            - generic "일출 06:23" [ref=e325]
+            - generic "일몰 18:21" [ref=e326]
+          - generic [ref=e327]:
+            - region "출발 시각 선택, 시간별 예보, 가로로 스크롤" [ref=e328]:
+              - table [ref=e329]:
+                - caption [ref=e330]: 2026-09-27. 출발 시각을 선택하세요. 강수는 이후 1시간. 기온과 체감 °C, 강수확률 %, 강수량 mm, 풍속과 돌풍 m/s.
+                - rowgroup [ref=e331]:
+                  - row [ref=e332]:
+                    - columnheader "출발" [ref=e333]
+                    - columnheader [ref=e334]:
+                      - button "0시" [ref=e335] [cursor=pointer]
+                    - columnheader [ref=e336]:
+                      - button "1시" [ref=e337] [cursor=pointer]
+                    - columnheader [ref=e338]:
+                      - button "2시" [ref=e339] [cursor=pointer]
+                    - columnheader [ref=e340]:
+                      - button "3시" [ref=e341] [cursor=pointer]
+                    - columnheader [ref=e342]:
+                      - button "4시" [ref=e343] [cursor=pointer]
+                    - columnheader [ref=e344]:
+                      - button "5시" [ref=e345] [cursor=pointer]
+                    - columnheader [ref=e346]:
+                      - button "6시" [ref=e347] [cursor=pointer]
+                    - columnheader [ref=e348]:
+                      - button "7시" [ref=e349] [cursor=pointer]
+                    - columnheader [ref=e350]:
+                      - button "8시" [ref=e351] [cursor=pointer]
+                    - columnheader [ref=e352]:
+                      - button "9시" [ref=e353] [cursor=pointer]
+                    - columnheader [ref=e354]:
+                      - button "10시" [ref=e355] [cursor=pointer]
+                    - columnheader [ref=e356]:
+                      - button "11시" [ref=e357] [cursor=pointer]
+                    - columnheader [ref=e358]:
+                      - button "12시" [ref=e359] [cursor=pointer]
+                    - columnheader [ref=e360]:
+                      - button "13시" [ref=e361] [cursor=pointer]
+                    - columnheader [ref=e362]:
+                      - button "14시" [ref=e363] [cursor=pointer]
+                    - columnheader [ref=e364]:
+                      - button "15시" [ref=e365] [cursor=pointer]
+                    - columnheader [ref=e366]:
+                      - button "16시" [ref=e367] [cursor=pointer]
+                    - columnheader [ref=e368]:
+                      - button "17시" [pressed] [ref=e369] [cursor=pointer]
+                    - columnheader [ref=e370]:
+                      - button "18시" [ref=e371] [cursor=pointer]
+                    - columnheader [ref=e372]:
+                      - button "19시" [ref=e373] [cursor=pointer]
+                    - columnheader [ref=e374]:
+                      - button "20시" [ref=e375] [cursor=pointer]
+                    - columnheader [ref=e376]:
+                      - button "21시" [ref=e377] [cursor=pointer]
+                    - columnheader [ref=e378]:
+                      - button "22시" [ref=e379] [cursor=pointer]
+                    - columnheader [ref=e380]:
+                      - button "23시" [ref=e381] [cursor=pointer]
+                - rowgroup [ref=e382]:
+                  - row [ref=e383]:
+                    - rowheader "기온 °C" [ref=e384]
+                    - cell "19°" [ref=e385]
+                    - cell "18°" [ref=e386]
+                    - cell "17°" [ref=e387]
+                    - cell "17°" [ref=e388]
+                    - cell "16°" [ref=e389]
+                    - cell "16°" [ref=e390]
+                    - cell "16°" [ref=e391]
+                    - cell "16°" [ref=e392]
+                    - cell "18°" [ref=e393]
+                    - cell "21°" [ref=e394]
+                    - cell "23°" [ref=e395]
+                    - cell "24°" [ref=e396]
+                    - cell "25°" [ref=e397]
+                    - cell "26°" [ref=e398]
+                    - cell "26°" [ref=e399]
+                    - cell "26°" [ref=e400]
+                    - cell "26°" [ref=e401]
+                    - cell "24°" [ref=e402]
+                    - cell "23°" [ref=e403]
+                    - cell "22°" [ref=e404]
+                    - cell "21°" [ref=e405]
+                    - cell "20°" [ref=e406]
+                    - cell "19°" [ref=e407]
+                    - cell "19°" [ref=e408]
+                  - row [ref=e409]:
+                    - rowheader "강수확률" [ref=e410]
+                    - cell "0%" [ref=e411]
+                    - cell "0%" [ref=e412]
+                    - cell "0%" [ref=e413]
+                    - cell "0%" [ref=e414]
+                    - cell "0%" [ref=e415]
+                    - cell "0%" [ref=e416]
+                    - cell "0%" [ref=e417]
+                    - cell "0%" [ref=e418]
+                    - cell "0%" [ref=e419]
+                    - cell "0%" [ref=e420]
+                    - cell "0%" [ref=e421]
+                    - cell "0%" [ref=e422]
+                    - cell "3%" [ref=e423]
+                    - cell "6%" [ref=e424]
+                    - cell "8%" [ref=e425]
+                    - cell "6%" [ref=e426]
+                    - cell "3%" [ref=e427]
+                    - cell "0%" [ref=e428]
+                    - cell "0%" [ref=e429]
+                    - cell "0%" [ref=e430]
+                    - cell "0%" [ref=e431]
+                    - cell "3%" [ref=e432]
+                    - cell "8%" [ref=e433]
+                    - cell "14%" [ref=e434]
+                  - row [ref=e435]:
+                    - rowheader "강수량 mm" [ref=e436]
+                    - cell "0" [ref=e437]
+                    - cell "0" [ref=e438]
+                    - cell "0" [ref=e439]
+                    - cell "0" [ref=e440]
+                    - cell "0" [ref=e441]
+                    - cell "0" [ref=e442]
+                    - cell "0" [ref=e443]
+                    - cell "0" [ref=e444]
+                    - cell "0" [ref=e445]
+                    - cell "0" [ref=e446]
+                    - cell "0" [ref=e447]
+                    - cell "0" [ref=e448]
+                    - cell "0" [ref=e449]
+                    - cell "0" [ref=e450]
+                    - cell "0" [ref=e451]
+                    - cell "0" [ref=e452]
+                    - cell "0" [ref=e453]
+                    - cell "0" [ref=e454]
+                    - cell "0" [ref=e455]
+                    - cell "0" [ref=e456]
+                    - cell "0" [ref=e457]
+                    - cell "0" [ref=e458]
+                    - cell "0" [ref=e459]
+                    - cell "0" [ref=e460]
+            - generic [ref=e461]:
+              - group [ref=e462]:
+                - generic "예보 시간과 단위 안내" [ref=e463] [cursor=pointer]: 예보 정보
+              - button "체감·바람 더 보기" [ref=e470] [cursor=pointer]
+          - generic [ref=e473]:
+            - paragraph [ref=e474]: 1시간 러닝 옷차림
+            - paragraph [ref=e475]: 17:00–18:00 · 체감 25°–26°
+            - paragraph [ref=e476]: 가벼운 반팔 또는 민소매 · 얇은 반바지
+            - group [ref=e477]:
+              - 'generic "내 체감: 보통" [ref=e478] [cursor=pointer]'
+    - navigation "주요 화면" [ref=e34]:
+      - button "러닝" [ref=e35] [cursor=pointer]
+      - button "비구름" [ref=e40] [cursor=pointer]
+      - button "주간" [ref=e46] [cursor=pointer]
+  - status

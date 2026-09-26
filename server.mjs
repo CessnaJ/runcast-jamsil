@@ -978,10 +978,10 @@ async function weeklyForecast(body) {
   const params = new URLSearchParams({
     latitude: String(location.lat), longitude: String(location.lon), timezone: "Asia/Seoul", forecast_days: "8", wind_speed_unit: "ms",
     hourly: "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code",
-    daily: "temperature_2m_min,temperature_2m_max,weather_code",
+    daily: "temperature_2m_min,temperature_2m_max,weather_code,sunrise,sunset",
   });
   // Eighth day's midnight provides the return sample for day seven at 23:00.
-  const payload = await cachedRawLoad(buildRawCacheKey({ provider: "open-meteo", dataset: "weekly", location: `${location.lat},${location.lon}`, cycle: kstDateKey(new Date()), variant: "v1-8d-ms" }), async () => {
+  const payload = await cachedRawLoad(buildRawCacheKey({ provider: "open-meteo", dataset: "weekly", location: `${location.lat},${location.lon}`, cycle: kstDateKey(new Date()), variant: "v2-8d-ms-solar" }), async () => {
     const data = await fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, { timeout: 15000 });
     normalizeWeekly(data, location, new Date().toISOString());
     return data;
