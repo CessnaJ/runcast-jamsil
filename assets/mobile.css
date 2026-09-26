@@ -1091,6 +1091,58 @@ input:focus-visible,
   border: 1px solid #dce8e3;
   background: #2c4038;
 }
+.rain-scale {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.rain-scale-title {
+  display: grid;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rain-scale-title small {
+  font-size: 10px;
+  font-weight: 400;
+}
+.rain-scale-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+.rain-scale-step {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rain-scale-step i {
+  display: block;
+  justify-self: center;
+  width: 20px;
+  height: 3px;
+  border-radius: 99px;
+}
+.rain-scale-blue {
+  background: #549dc9;
+}
+.rain-scale-green {
+  background: #75af73;
+}
+.rain-scale-yellow {
+  background: #d4b963;
+}
+.rain-scale-red {
+  background: linear-gradient(90deg, #cf8077 50%, #ad88bc 50%);
+}
 .naver-marker-mobile {
   min-width: 32px;
   height: 32px;
