@@ -121,15 +121,18 @@ test('shared CCTV rules keep approach rain local and require trusted observation
   assert.equal(evaluateRunWindow(samples,[wet(1),wet(2)],{requireSamples:3}).decision.reasonCode,'surface_cctv');
 });
 test('weekly data keeps null distinct from zero and contains seven calendar days',()=>{
-  const data=normalizeWeekly({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:[0,12],precipitation_probability:[null,0],wind_speed_10m:[null,0]},daily:{time:Array.from({length:8},(_,i)=>`2026-09-${12+i}`)}},ROUTES.seokchon,'2026-09-11T15:00:00Z');
+  const dates=Array.from({length:8},(_,i)=>`2026-09-${12+i}`);
+  const data=normalizeWeekly({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:[0,12],precipitation_probability:[null,0],wind_speed_10m:[null,0]},daily:{time:dates,sunrise:dates.map(d=>`${d}T06:20`),sunset:dates.map(d=>`${d}T18:35`)}},ROUTES.seokchon,'2026-09-11T15:00:00Z');
   assert.equal(data.daily.length,7);assert.equal(data.hourly[0].temperature,0);assert.equal(data.hourly[0].probability,null);assert.equal(data.hourly[1].probability,0);assert.equal(data.units.windSpeed,'m/s');
+  assert.equal(data.daily[0].sunrise,'2026-09-12T06:20');assert.equal(data.daily[6].sunset,'2026-09-18T18:35');
   assert.equal(data.expiresAt,'2026-09-11T15:30:00.000Z');
 });
 test('weekly normalization rejects quoted numeric samples instead of coercing them to zero',()=>{
-  const data=normalizeWeekly({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:['0',1]},daily:{time:['2026-09-12'],temperature_2m_min:['0'],temperature_2m_max:[1]}},ROUTES.seokchon,'2026-09-11T15:00:00Z');
+  const data=normalizeWeekly({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:['0',1]},daily:{time:['2026-09-12'],temperature_2m_min:['0'],temperature_2m_max:[1],sunrise:['2026-09-13T06:20'],sunset:['invalid']}},ROUTES.seokchon,'2026-09-11T15:00:00Z');
   assert.equal(data.hourly[0].temperature,null);
   assert.equal(data.daily[0].low,null);
   assert.equal(data.daily[0].high,1);
+  assert.equal(data.daily[0].sunrise,null);assert.equal(data.daily[0].sunset,null);
 });
 test('hourly temperature uses exact local-hour buckets and shared negative rounding',()=>{
   const hourly=[
@@ -190,12 +193,12 @@ test('weekly API sends selected coordinates, m/s and return-hour coverage to pro
   resetRawCacheForTest();const nativeFetch=globalThis.fetch;let called;
   globalThis.fetch=async(url)=>{
     called=new URL(url);
-    return new Response(JSON.stringify({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:[20,21]},daily:{time:['2026-09-12'],temperature_2m_min:[20],temperature_2m_max:[21]}}),{status:200,headers:{'Content-Type':'application/json'}});
+    return new Response(JSON.stringify({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:[20,21]},daily:{time:['2026-09-12'],temperature_2m_min:[20],temperature_2m_max:[21],sunrise:['2026-09-12T06:20'],sunset:['2026-09-12T18:35']}}),{status:200,headers:{'Content-Type':'application/json'}});
   };
   try {
     const req={url:'/api/weekly-forecast',method:'POST',headers:{},async *[Symbol.asyncIterator](){yield Buffer.from(JSON.stringify({location:{lat:35.1796,lon:129.0756,name:'부산'}}));}};
     let status,body;const res={writeHead(s){status=s;},end(b){body=JSON.parse(b);}};
-    await requestHandler(req,res);assert.equal(status,200);assert.equal(called.searchParams.get('latitude'),'35.1796');assert.equal(called.searchParams.get('longitude'),'129.0756');assert.equal(called.searchParams.get('wind_speed_unit'),'ms');assert.equal(called.searchParams.get('forecast_days'),'8');assert.equal(body.location.name,'부산');
+    await requestHandler(req,res);assert.equal(status,200);assert.equal(called.searchParams.get('latitude'),'35.1796');assert.equal(called.searchParams.get('longitude'),'129.0756');assert.equal(called.searchParams.get('wind_speed_unit'),'ms');assert.equal(called.searchParams.get('forecast_days'),'8');assert.ok(called.searchParams.get('daily').includes('sunrise,sunset'));assert.equal(body.location.name,'부산');assert.equal(body.daily[0].sunrise,'2026-09-12T06:20');assert.equal(body.daily[0].sunset,'2026-09-12T18:35');
   } finally {globalThis.fetch=nativeFetch;}
 });
 
