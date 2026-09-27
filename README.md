@@ -70,7 +70,7 @@ AI 관련 환경변수나 키는 등록하지 않습니다. 배포가 끝나면 
 
 ITS 네트워크 요청 실패는 Vercel Logs에 `[ITS_HTTP]` 경고 한 줄로 기록됩니다. 별도 환경변수 없이 적용되며, 캐시에서 응답할 때는 네트워크 진단 로그를 추가하지 않습니다. 날씨 화면을 유지하기 위해 `/api/mobile-context` 응답 자체는 HTTP 200일 수 있으므로 CCTV 성공 여부를 상태 코드만으로 판단하지 않습니다.
 
-배포 후 모바일 화면에서 한 번 새로고침하고 Logs에서 `/api/mobile-context` 요청의 `[ITS_HTTP]`를 확인합니다. `version: its-http-v1`과 `commit`으로 진단 코드 배포 여부를 구분할 수 있습니다.
+배포 후 모바일 화면에서 한 번 새로고침하고 Logs에서 `/api/mobile-context` 요청의 `[ITS_HTTP]`를 확인합니다. `version: its-http-v2`와 `commit`으로 연결 제한 수정 코드의 배포 여부를 구분할 수 있습니다.
 
 | `phase` | 실패 시 대기 중이던 단계 |
 | --- | --- |
@@ -82,6 +82,8 @@ ITS 네트워크 요청 실패는 Vercel Logs에 `[ITS_HTTP]` 경고 한 줄로 
 | `body` | 응답 수신·HTTP 상태 확인 |
 
 `timings`는 요청 시작부터 각 이벤트까지의 누적 밀리초이며, `null`은 해당 이벤트를 관측하지 못했다는 뜻입니다. 재사용 소켓(`reusedSocket: true`)에서는 DNS/TCP/TLS 이벤트가 다시 발생하지 않습니다. `configuredTimeoutMs`는 코드에서 요청한 소켓 제한 시간, `timeoutObserved`는 실제 timeout 이벤트 당시 단계·경과 시간·소켓 설정입니다. `resolvedAddress`와 `remotePort`는 ITS 측 연결 정보이며 사용자 IP나 위치가 아닙니다.
+
+소켓 할당 즉시 제한 시간을 12초로 설정해 TCP 연결 전에도 적용합니다. `request.setTimeout()`만 사용하면 연결 전에는 Node 기본 HTTPS agent의 5초 제한이 먼저 적용될 수 있습니다. 전체 요청에도 별도 12초 상한을 두며 완료·실패 시 타이머를 정리합니다. `timeoutObserved.kind`는 `socket-idle`(소켓 무응답) 또는 `deadline`(전체 요청 상한)입니다. TCP 연결 실패가 지속될 경우 제한 시간 수정만으로 네트워크 경로·접근 제한이 해결되는 것은 아닙니다.
 
 인증키, 요청 URL의 쿼리, 헤더, 요청 좌표, 응답 본문, 원본 오류 메시지는 기록하지 않습니다. 성공 요청까지 비교하려면 선택적으로 `ITS_DIAGNOSTICS=1`을 설정해 재배포하고, 진단이 끝나면 제거합니다. 이 로그만으로 방화벽 차단을 단정하지 말고 실패 단계와 배포 환경을 함께 확인합니다.
 

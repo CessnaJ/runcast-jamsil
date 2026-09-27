@@ -13,8 +13,13 @@ function network(t, drive) {
   t.mock.method(console, 'info', line => info.push(line));
   t.mock.method(https, 'get', (url, options, onResponse) => {
     const request = new EventEmitter();
-    const socket = Object.assign(new EventEmitter(), { connecting: true, secureConnecting: true, timeout: 0, remotePort: 9443 });
-    request.setTimeout = (ms, callback) => { socket.timeout = ms; request.timeoutCallback = callback; return request; };
+    const socket = Object.assign(new EventEmitter(), { connecting: true, secureConnecting: true, timeout: 5000, remotePort: 9443 });
+    socket.setTimeout = ms => { socket.timeout = ms; return socket; };
+    request.setTimeout = (ms, callback) => {
+      if (socket.connecting) socket.once('connect', () => socket.setTimeout(ms));
+      else socket.setTimeout(ms);
+      request.timeoutCallback = callback; return request;
+    };
     request.destroy = error => { request.emit('error', error); return request; };
     queueMicrotask(() => drive({ request, socket, onResponse }));
     return request;
@@ -32,7 +37,7 @@ for (const phase of ['dns', 'tcp', 'tls', 'response']) {
       socket.timeout = 5000;
       request.timeoutCallback();
       request.emit('error', Object.assign(new Error(secretUrl), { code: 'ECONNRESET' }));
-      for (const event of ['lookup', 'connect', 'secureConnect']) assert.equal(socket.listenerCount(event), 0);
+      for (const event of ['lookup', 'secureConnect']) assert.equal(socket.listenerCount(event), 0);
     });
     await assert.rejects(httpsGetText(secretUrl, { headers: { Authorization: 'private-header' } }), { code: 'ITS_CONNECT_TIMEOUT' });
     assert.equal(output.warnings.length, 1);
@@ -48,6 +53,43 @@ for (const phase of ['dns', 'tcp', 'tls', 'response']) {
     assert.doesNotMatch(output.warnings.join(''), /private-test-key|private-header|127\.123456|apiKey|Authorization/);
   });
 }
+
+test('ITS overrides the global agent timeout before TCP connects', async t => {
+  network(t, ({ request, socket }) => {
+    assert.equal(socket.timeout, 5000);
+    request.emit('socket', socket);
+    assert.equal(socket.connecting, true);
+    assert.equal(socket.timeout, 12000);
+    request.destroy(Object.assign(new Error('test stop'), { code: 'ECONNRESET' }));
+  });
+  await assert.rejects(httpsGetText(secretUrl), { code: 'ECONNRESET' });
+});
+
+test('ITS deadline also ends requests that never receive a socket', async t => {
+  const output = network(t, () => {});
+  await assert.rejects(httpsGetText(secretUrl, { timeout: 20 }), { code: 'ITS_REQUEST_TIMEOUT' });
+  const log = output.diagnostic();
+  assert.equal(log.version, 'its-http-v2');
+  assert.equal(log.phase, 'socket');
+  assert.equal(log.timeoutObserved.kind, 'deadline');
+  assert.equal(output.warnings.length, 1);
+});
+
+test('ITS absolute deadline ends a response even while body data keeps arriving', async t => {
+  const output = network(t, ({ request, socket, onResponse }) => {
+    request.emit('socket', socket);
+    socket.emit('lookup', null, '192.0.2.1'); socket.emit('connect'); socket.emit('secureConnect');
+    const response = Object.assign(new EventEmitter(), { statusCode: 200, headers: {} });
+    onResponse(response);
+    const interval = setInterval(() => response.emit('data', Buffer.from('x')), 3);
+    t.after(() => clearInterval(interval));
+  });
+  await assert.rejects(httpsGetText(secretUrl, { timeout: 30 }), { code: 'ITS_REQUEST_TIMEOUT' });
+  const log = output.diagnostic();
+  assert.equal(log.phase, 'body');
+  assert.equal(log.timeoutObserved.kind, 'deadline');
+  assert.ok(log.receivedBytes > 0);
+});
 
 test('ITS response failure preserves HTTP status and Retry-After without logging response body', async t => {
   const output = network(t, ({ request, socket, onResponse }) => {
