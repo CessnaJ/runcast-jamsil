@@ -139,6 +139,7 @@ export function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2
     let receivedBytes = 0;
     let resolvedAddress = null;
     let timeoutObserved = null;
+    let deadlineTimer;
     const startedAt = performance.now();
     const elapsed = () => Math.round(performance.now() - startedAt);
     const requestId = randomUUID();
@@ -149,11 +150,12 @@ export function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2
       socketListeners.push([event, listener]);
     };
     const finishDiagnostic = (outcome, error = null) => {
+      clearTimeout(deadlineTimer);
       for (const [event, listener] of socketListeners) socket.removeListener(event, listener);
       if (outcome === "success" && process.env.ITS_DIAGNOSTICS !== "1") return;
       // Allowlisted fields only: never log the URL/query, headers, body, or error.message.
       const diagnostic = {
-        version: "its-http-v1", requestId, outcome, phase,
+        version: "its-http-v2", requestId, outcome, phase,
         host: "openapi.its.go.kr", port: 9443,
         region: process.env.VERCEL_REGION || (process.env.VERCEL ? "vercel-unknown" : "local"),
         commit: /^[a-f0-9]{7,40}$/i.test(process.env.VERCEL_GIT_COMMIT_SHA || "") ? process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 12) : null,
@@ -181,6 +183,14 @@ export function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2
       settled = true;
       finishDiagnostic("error", error);
       rejectPromise(error);
+    };
+    const expire = (kind) => {
+      if (settled) return;
+      timeoutObserved = { kind, phase, elapsedMs: elapsed(), socketTimeoutMs: Number.isFinite(socket?.timeout) ? socket.timeout : null };
+      const error = new Error(kind === "deadline" ? "ITS CCTV 전체 요청 시간 초과" : "ITS CCTV 서버 연결 시간 초과");
+      error.code = kind === "deadline" ? "ITS_REQUEST_TIMEOUT" : "ITS_CONNECT_TIMEOUT";
+      request.destroy(error);
+      reject(error);
     };
 
     request = https.get(url, { headers, family: 4 }, (response) => {
@@ -227,6 +237,9 @@ export function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2
 
     request.once("socket", (assignedSocket) => {
       socket = assignedSocket;
+      // request.setTimeout applies only after TCP connect; override the global
+      // agent's 5s timeout immediately, while DNS/TCP/TLS are still pending.
+      socket.setTimeout(timeout);
       timings.socketMs = elapsed();
       // Reused keep-alive sockets do not emit lookup/connect/secureConnect again.
       phase = socket.connecting ? "dns" : socket.secureConnecting ? "tls" : "response";
@@ -238,13 +251,10 @@ export function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2
       observeSocket("connect", () => { timings.tcpMs = elapsed(); phase = "tls"; });
       observeSocket("secureConnect", () => { timings.tlsMs = elapsed(); phase = "response"; });
     });
-    request.setTimeout(timeout, () => {
-      timeoutObserved = { phase, elapsedMs: elapsed(), socketTimeoutMs: Number.isFinite(socket?.timeout) ? socket.timeout : null };
-      const error = new Error("ITS CCTV 서버 연결 시간 초과");
-      error.code = "ITS_CONNECT_TIMEOUT";
-      request.destroy(error);
-    });
+    request.setTimeout(timeout, () => expire("socket-idle"));
     request.on("error", reject);
+    // Inactivity timers restart on traffic; keep the entire request bounded too.
+    deadlineTimer = setTimeout(() => expire("deadline"), timeout);
   });
 }
 
