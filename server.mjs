@@ -1,6 +1,7 @@
 import { ROUTES, resolveLocation, normalizeWeekly, numberOrNull, evaluateRunWindow, runSampleMetrics } from './assets/weather-domain.mjs';
 import http from "node:http";
 import https from "node:https";
+import { randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -128,26 +129,70 @@ async function fetchJson(url, options = {}) {
 }
 
 /** ITS의 비표준 HTTPS 9443 포트를 Node 소켓으로 직접 호출합니다. */
-function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2_000_000 } = {}) {
+export function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2_000_000 } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
     let settled = false;
+    let request;
+    let socket;
+    let phase = "socket";
+    let statusCode = null;
+    let receivedBytes = 0;
+    let resolvedAddress = null;
+    let timeoutObserved = null;
+    const startedAt = performance.now();
+    const elapsed = () => Math.round(performance.now() - startedAt);
+    const requestId = randomUUID();
+    const timings = { socketMs: null, dnsMs: null, tcpMs: null, tlsMs: null, responseMs: null };
+    const socketListeners = [];
+    const observeSocket = (event, listener) => {
+      socket.once(event, listener);
+      socketListeners.push([event, listener]);
+    };
+    const finishDiagnostic = (outcome, error = null) => {
+      for (const [event, listener] of socketListeners) socket.removeListener(event, listener);
+      if (outcome === "success" && process.env.ITS_DIAGNOSTICS !== "1") return;
+      // Allowlisted fields only: never log the URL/query, headers, body, or error.message.
+      const diagnostic = {
+        version: "its-http-v1", requestId, outcome, phase,
+        host: "openapi.its.go.kr", port: 9443,
+        region: process.env.VERCEL_REGION || (process.env.VERCEL ? "vercel-unknown" : "local"),
+        commit: /^[a-f0-9]{7,40}$/i.test(process.env.VERCEL_GIT_COMMIT_SHA || "") ? process.env.VERCEL_GIT_COMMIT_SHA.slice(0, 12) : null,
+        node: process.version,
+        durationMs: elapsed(), configuredTimeoutMs: timeout,
+        socketTimeoutMs: Number.isFinite(socket?.timeout) ? socket.timeout : null,
+        resolvedAddress, remotePort: socket?.remotePort || null,
+        reusedSocket: Boolean(request?.reusedSocket), timings, timeoutObserved,
+        statusCode, receivedBytes,
+        errorCode: /^[A-Z][A-Z0-9_]{0,63}$/.test(error?.code || "") ? error.code : error ? "UNKNOWN" : null,
+      };
+      const line = `[ITS_HTTP] ${JSON.stringify(diagnostic)}`;
+      if (outcome === "error") console.warn(line);
+      else console.info(line);
+    };
     const resolve = (value) => {
       if (settled) return;
       settled = true;
+      phase = "complete";
+      finishDiagnostic("success");
       resolvePromise(value);
     };
     const reject = (error) => {
       if (settled) return;
       settled = true;
+      finishDiagnostic("error", error);
       rejectPromise(error);
     };
 
-    const request = https.get(url, { headers, family: 4 }, (response) => {
+    request = https.get(url, { headers, family: 4 }, (response) => {
+      phase = "body";
+      timings.responseMs = elapsed();
+      statusCode = response.statusCode || null;
       const chunks = [];
       let size = 0;
 
       response.on("data", (chunk) => {
         size += chunk.length;
+        receivedBytes = size;
         if (size > maxBytes) {
           const error = new Error("ITS CCTV 응답이 너무 큽니다.");
           error.code = "ITS_RESPONSE_TOO_LARGE";
@@ -156,12 +201,13 @@ function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2_000_00
         }
         chunks.push(chunk);
       });
-      response.on("aborted", () => reject(new Error("ITS CCTV 응답이 중단되었습니다.")));
+      response.on("aborted", () => reject(Object.assign(new Error("ITS CCTV 응답이 중단되었습니다."), { code: "ITS_RESPONSE_ABORTED" })));
       response.on("error", reject);
       response.on("end", () => {
         const status = response.statusCode || 0;
         if (status < 200 || status >= 300) {
           const error = new Error(`ITS CCTV 요청 실패 (${status || "응답 없음"})`);
+          error.code = "ITS_HTTP_STATUS";
           error.statusCode = status || 502;
           const retryAfter = response.headers?.["retry-after"] || response.headers?.["Retry-After"];
           if (retryAfter) {
@@ -179,7 +225,21 @@ function httpsGetText(url, { headers = {}, timeout = 12_000, maxBytes = 2_000_00
       });
     });
 
+    request.once("socket", (assignedSocket) => {
+      socket = assignedSocket;
+      timings.socketMs = elapsed();
+      // Reused keep-alive sockets do not emit lookup/connect/secureConnect again.
+      phase = socket.connecting ? "dns" : socket.secureConnecting ? "tls" : "response";
+      observeSocket("lookup", (error, address) => {
+        timings.dnsMs = elapsed();
+        resolvedAddress = address || null;
+        phase = error ? "dns" : "tcp";
+      });
+      observeSocket("connect", () => { timings.tcpMs = elapsed(); phase = "tls"; });
+      observeSocket("secureConnect", () => { timings.tlsMs = elapsed(); phase = "response"; });
+    });
     request.setTimeout(timeout, () => {
+      timeoutObserved = { phase, elapsedMs: elapsed(), socketTimeoutMs: Number.isFinite(socket?.timeout) ? socket.timeout : null };
       const error = new Error("ITS CCTV 서버 연결 시간 초과");
       error.code = "ITS_CONNECT_TIMEOUT";
       request.destroy(error);
