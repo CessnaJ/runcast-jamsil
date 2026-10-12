@@ -360,14 +360,15 @@
 
   <div class="modal-backdrop" id="settingsModal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <div class="modal">
-      <div class="modal-head"><div><h2 id="settingsTitle">실시간 자료 연결</h2><p class="intro" id="settingsIntro">키 값은 브라우저로 보내지 않고 서버 환경변수에서만 사용합니다.</p></div><button class="ghost-btn" id="closeSettings" aria-label="닫기">×</button></div>
+      <div class="modal-head"><div><h2 id="settingsTitle">실시간 자료 연결</h2><p class="intro" id="settingsIntro">연결 키는 서버에서 설정하며 CCTV 조회 시 ITS 키를 기기에 전달합니다.</p></div><button class="ghost-btn" id="closeSettings" aria-label="닫기">×</button></div>
       <div class="connection-list" id="connectionList" aria-live="polite"></div>
-      <p class="security-note">Naver Maps Client ID는 지도 SDK용 공개 식별자입니다. 기상청 동네예보·강수영상·ITS 키는 값 대신 연결 여부만 표시합니다.</p>
+      <p class="security-note">Naver Maps Client ID는 지도 SDK용 공개 식별자입니다. 기상청 키는 서버에서만 사용하며, ITS 키는 목록 조회 시에만 기기에 전달합니다.</p>
     </div>
   </div>
   <div class="toast" id="toast"></div>
 
-  <script>
+  <script type="module">
+    import {loadCctv} from './assets/cctv-client.mjs';
     const ROUTES = {
       seokchon: { name: '석촌호수', lat: 37.5082, lon: 127.1001 },
       olympic: { name: '올림픽공원', lat: 37.5207, lon: 127.1215 },
@@ -501,7 +502,7 @@
           <span class="cctv-state ${klass}"></span><span class="sector">${escapeHtml(camera.sector)} · ${camera.distance ? camera.distance + 'KM' : copy}</span>
           <strong>${escapeHtml(camera.name)}</strong><p>${escapeHtml(camera.evidence || copy)}</p><span class="cctv-open">영상 직접 보기 ↗</span>
         </a>`;
-      }).join('') : '<div class="cctv-empty">CCTV 고장이 아닙니다.<br>ITS 인증키가 비어 있어 CCTV 목록을 아직 요청하지 않았습니다.</div>';
+      }).join('') : `<div class="cctv-empty">${state.data?.cctv?.pending?'CCTV 목록을 갱신하고 있어요.':state.data?.errors?.some(error=>error.startsWith('CCTV:'))?'CCTV를 불러오지 못했어요. 다시 확인해 주세요.':state.data?.cctv?.configured?'이 위치 주변에서 제공되는 CCTV가 없어요.':'CCTV 연결이 설정되지 않았어요.'}</div>`;
       const realStill = cameras.some((camera) => camera.url && (camera.cctvType === '3' || String(camera.format).toLowerCase().includes('jpg')));
       const publicMode = state.runtime?.mode === 'public' || state.runtime?.aiEnabled === false;
       $('#analyzeBtn').disabled = publicMode || !state.codex?.codex || !realStill || state.analyzing;
@@ -589,6 +590,8 @@
         const response = await fetch('/api/snapshot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ route: state.route }) });
         const payload = await response.json(); if (!response.ok) throw new Error(payload.error || '자료 요청 실패');
         state.data = payload; render();
+        const cameras=await loadCctv({location:payload.route,onReady:result=>{state.data={...state.data,...result};render();}});
+        state.data={...state.data,...cameras,errors:[...(payload.errors||[]),...(cameras.errors||[])]};render();
         if (payload.errors?.length) toast(payload.errors[0]);
       } catch (error) { toast(error.message); }
       finally { state.loading = false; $('#refreshBtn').disabled = false; $('#refreshBtn').textContent = '지금 확인'; }

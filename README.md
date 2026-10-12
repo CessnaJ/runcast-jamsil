@@ -27,7 +27,7 @@ Live Server나 별도 터미널은 필요하지 않습니다. Node.js 20 이상�
 node server.mjs
 ```
 
-기상청 동네예보·API허브·ITS 키는 브라우저로 전달하거나 요청 본문에 넣지 않습니다. Naver Maps Client ID만 지도 JavaScript SDK 구동을 위해 브라우저에 전달되는 공개 식별자입니다.
+기상청 동네예보·API허브 키는 서버에서만 사용합니다. Naver Maps Client ID는 지도 SDK용 공개 식별자입니다. ITS 키는 CCTV 목록 캐시가 없을 때 브라우저에 전달하여 사용자 네트워크에서 ITS를 직접 조회합니다. 브라우저 저장소에 키를 보관하지 않지만 개발자 도구에서는 확인할 수 있습니다.
 
 ```dotenv
 NAVER_MAP_CLIENT_ID=...
@@ -110,3 +110,18 @@ ITS 네트워크 요청 실패는 Vercel Logs에 `[ITS_HTTP]` 경고 한 줄로 
 상세 API 계약, TTL, 추천 규칙, PWA 동작은 [구현 명세](docs/weather-expansion.md)를 참고하세요. 테스트는 `node --test tests/weather.test.mjs`로 실행합니다.
 
 주간 표의 시간은 출발 기준입니다. 기온·체감·풍속은 출발 정시, 강수량·강수확률·돌풍은 이후 1시간 구간을 표시합니다. 옷차림도 같은 구간의 출발·복귀 체감을 사용합니다. 러닝 탭에서 판단 근거를 바로 읽고, 주변 CCTV는 같은 본문의 원본 링크로 열 수 있습니다. 비구름 탭의 CCTV 바로가기는 이 본문 위치로 이동합니다.
+
+
+## CCTV 목록: 브라우저 직접 조회
+
+1. `POST /api/cctv/prepare {location}`: 유효한 목록 캐시가 있으면 반환합니다. 없으면 25초짜리 일회용 조회 토큰과 ITS 요청 정보를 반환합니다 (`Cache-Control: no-store`).
+2. 브라우저가 ITS HTTPS API를 직접 호출합니다. 최대 12초, 2MB로 제한하며 CORS가 허용되어야 합니다. 주변 15km의 가까운 8개를 즉시 표시합니다.
+3. `POST /api/cctv/complete {location,token,rows}`: 서버가 필드/개수/좌표/영상 URL을 재검증하고 목록만 메모리에 저장합니다. 실패 보고는 `{location,token,failed:true}`로 전달합니다.
+
+- Redis/DB 추가 설정은 없습니다. 성공 25초 캐시, 이전 목록 최대 45초, 실패 후 20초 대기이며 모든 시간은 서버 조회 토큰 발급 시각을 기준으로 계산합니다(실패 대기는 실패 보고 시각 기준).
+- 캐시와 조회 토큰은 **인스턴스별 메모리**입니다. 다른 Vercel 인스턴스는 캐시를 못 찾고 다시 조회할 수 있습니다. 저장 요청이 다른 인스턴스에 도착해 409가 되어도 브라우저에서 받은 목록은 표시합니다. 공용 캐시나 전역 중복 방지는 보장하지 않습니다.
+- 같은 인스턴스/좌표에서 중복 조회는 토큰 유효기간 동안 대기합니다. 앱 종료로 완료 보고가 없어도 토큰은 만료됩니다. 브라우저는 추가 폴링 루프를 만들지 않고 기존 새로고침 정책을 따릅니다.
+- 클라이언트 업로드는 출처 인증이 되지 않으므로 영상 URL을 `cctvsec.ktict.co.kr`, `cctv.ktict.co.kr`로 제한하고 AI 관측/신뢰도 필드는 받지 않습니다. ITS가 새 호스트를 제공하면 `assets/cctv-domain.mjs`의 허용 목록을 검토해 추가합니다.
+- 영상 새 창 열기는 기존처럼 원본 URL 직접 연결입니다. `/api/mobile-context`는 항공기상만 조회하고 CCTV는 위 경로로 분리됩니다. 데스크톱 화면도 동일한 CCTV 클라이언트를 사용합니다.
+- 역할 분리: `assets/cctv-client.mjs`(브라우저 호출), `assets/cctv-domain.mjs`(파싱/필터), `lib/cctv-broker.mjs`(캐시/토큰). 추후 저장소 교체는 broker 내부에서 진행할 수 있습니다.
+- 검증: `node --test tests/*.test.mjs`
