@@ -1,3 +1,6 @@
+import { createCctvBroker } from './lib/cctv-broker.mjs';
+import { validCctvUrl } from './assets/cctv-domain.mjs';
+export { parseItsCctvResponse } from './assets/cctv-domain.mjs';
 import { ROUTES, resolveLocation, normalizeWeekly, numberOrNull, evaluateRunWindow, runSampleMetrics } from './assets/weather-domain.mjs';
 import http from "node:http";
 import https from "node:https";
@@ -14,6 +17,7 @@ const RUNTIME_MODE = process.env.VERCEL || process.env.RUNCAST_MODE === "public"
 const LOCAL_AI_ENABLED = RUNTIME_MODE === "local" && process.env.RUNCAST_AI_ENABLED !== "0";
 const LOCAL_KEYS = await loadLocalKeys();
 const knownCctvUrls = new Set();
+const cctvBroker = createCctvBroker({apiKey:LOCAL_KEYS.itsApiKey,onCameras:cameras=>{for(const camera of cameras)knownCctvUrls.add(camera.url);}});
 let activeRadarKey = "";
 const radarCache = new Map();
 // UI 결과가 아닌 외부 원천 응답만 인스턴스 메모리에 둡니다.
@@ -857,88 +861,10 @@ function parseXmlTag(block, tag) {
   return (block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i")) || [])[1]?.trim() || "";
 }
 
-function normalizeCctv(item, target) {
-  const lat = Number(item.coordy), lon = Number(item.coordx);
-  const dy = lat - target.lat, dx = (lon - target.lon) * Math.cos(target.lat * Math.PI / 180);
-  const angle = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
-  const sector = angle < 22.5 || angle >= 337.5 ? "북" : angle < 67.5 ? "북동" : angle < 112.5 ? "동" : angle < 157.5 ? "남동" : angle < 202.5 ? "남" : angle < 247.5 ? "남서" : angle < 292.5 ? "서" : "북서";
-  const distance = haversine(target.lat, target.lon, lat, lon);
-  return {
-    id: `${lat.toFixed(5)}-${lon.toFixed(5)}`,
-    name: item.cctvname || "이름 없는 CCTV",
-    lat, lon, sector, distance: Math.round(distance * 10) / 10,
-    url: item.cctvurl,
-    format: item.cctvformat || "",
-    cctvType: String(item.cctvtype || ""),
-    rainNow: "unknown", intensity: "unknown", confidence: 0,
-    evidence: "아직 확인하지 않음",
-  };
-}
-
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371, p = Math.PI / 180;
   const a = Math.sin((lat2 - lat1) * p / 2) ** 2 + Math.cos(lat1 * p) * Math.cos(lat2 * p) * Math.sin((lon2 - lon1) * p / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
-}
-
-function chooseDirectionalCctv(cameras) {
-  // 러닝 본문은 가까운 카메라부터 보여 줍니다. 동률은 API에서 정한 안정적인 좌표 ID로 정렬합니다.
-  return cameras.slice().sort((a, b) => a.distance - b.distance || a.id.localeCompare(b.id)).slice(0, 8);
-}
-
-function itsResponseError(message = "ITS CCTV 응답 오류") {
-  const error = new Error(message);
-  error.code = "ITS_INVALID_RESPONSE";
-  return error;
-}
-
-export function parseItsCctvResponse(text) {
-  const source=String(text || "").trim();
-  if (!source) throw itsResponseError("ITS CCTV 응답이 비어 있습니다.");
-  try {
-    const json=JSON.parse(source), response=json?.response;
-    if (!response || typeof response !== "object") throw itsResponseError("ITS CCTV JSON 형식을 확인하지 못했습니다.");
-    const errorMessage=response.error || response.errorMessage || response.message;
-    if (errorMessage || String(response.resultCode || "") === "000") throw itsResponseError(`ITS CCTV 오류: ${errorMessage || response.resultMsg || "System error"}`);
-    if (Array.isArray(response.data)) return response.data;
-    if (String(response.datacount ?? "") === "0" && (response.data == null)) return [];
-    throw itsResponseError("ITS CCTV 목록 형식을 확인하지 못했습니다.");
-  } catch (error) {
-    if (error?.code === "ITS_INVALID_RESPONSE") throw error;
-  }
-  if (!/<(?:\w+:)?response\b/i.test(source) || /<html\b|<title\b/i.test(source)) throw itsResponseError("ITS CCTV 응답 형식을 확인하지 못했습니다.");
-  const resultCode=parseXmlTag(source,"resultCode"), resultMessage=parseXmlTag(source,"resultMsg") || parseXmlTag(source,"message");
-  if (resultCode === "000" || /(?:error|인증|system)/i.test(resultMessage)) throw itsResponseError(`ITS CCTV 오류: ${resultMessage || "System error"}`);
-  const raw=[...source.matchAll(/<data>([\s\S]*?)<\/data>/gi)].map((match) => ({
-    cctvname: parseXmlTag(match[1], "cctvname"),
-    coordx: parseXmlTag(match[1], "coordx"), coordy: parseXmlTag(match[1], "coordy"),
-    cctvurl: parseXmlTag(match[1], "cctvurl"), cctvformat: parseXmlTag(match[1], "cctvformat"),
-    cctvtype: parseXmlTag(match[1], "cctvtype"),
-  }));
-  if (raw.length) return raw;
-  if (parseXmlTag(source,"datacount") === "0") return [];
-  throw itsResponseError("ITS CCTV 목록 형식을 확인하지 못했습니다.");
-}
-
-async function getItsCctv(apiKey, target, cacheTrace = []) {
-  const params = new URLSearchParams({
-    apiKey, type: "all", cctvType: "3",
-    minX: String(target.lon - 0.55), maxX: String(target.lon + 0.55),
-    minY: String(target.lat - 0.42), maxY: String(target.lat + 0.42),
-    getType: "json",
-  });
-  const location = `bbox${(target.lon - .55).toFixed(3)},${(target.lat - .42).toFixed(3)},${(target.lon + .55).toFixed(3)},${(target.lat + .42).toFixed(3)}`;
-  const raw = await cachedRawLoad(buildRawCacheKey({
-    provider: "its", dataset: "cctv-info", location, cycle: "live", variant: "type-all-cctv3-jsonxml",
-  }), async () => parseItsCctvResponse(await httpsGetText(`https://openapi.its.go.kr:9443/cctvInfo?${params}`, {
-    timeout: 12_000,
-    headers: { "User-Agent": "RunCast-Jamsil/0.1 local-dashboard", Accept: "application/json, application/xml" },
-  })), { trace: cacheTrace, freshMs: 25_000, staleMs: 45_000, failureMs: 20_000 });
-  const cameras = raw.map((item) => normalizeCctv(item, target)).filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lon) && c.url && c.distance <= 15);
-  const chosen = chooseDirectionalCctv(cameras);
-  for (const camera of chosen) knownCctvUrls.add(camera.url);
-  const event=cacheTrace.filter(item=>item.provider === "its" && item.dataset === "cctv-info" && (item.fetchedAt || item.retryAt)).at(-1);
-  return { cameras: chosen, cache: event ? { fetchedAt:event.fetchedAt || null, usableUntil:event.staleUntil || null, retryAt:event.retryAt || null, stale:Boolean(event.stale || ["stale-if-error","stale-cooldown"].includes(event.state)) } : null };
 }
 
 async function getAviation(cacheTrace = []) {
@@ -1123,32 +1049,14 @@ async function mobileForecast(body) {
 
 async function mobileContext(body) {
   const route = resolveLocation(body);
-  const keys = effectiveKeys(body.keys);
-  const cacheTrace = [];
-  const errors = [];
-  // CCTV와 항공기상은 첫 판단과 독립적이므로 병렬·후속으로 조회합니다.
-  const [cctvResult, aviationResult] = await Promise.allSettled([
-    keys.itsApiKey ? getItsCctv(keys.itsApiKey, route, cacheTrace) : Promise.resolve({ cameras: [], cache: null }),
-    haversine(route.lat, route.lon, 37.5082, 127.1001) <= 65 ? getAviation(cacheTrace) : Promise.resolve({ metar: [], taf: [] }),
-  ]);
-  const cctvEvent = cacheTrace.filter(item => item.provider === "its" && item.dataset === "cctv-info" && (item.fetchedAt || item.retryAt)).at(-1);
-  const cctvPayload = cctvResult.status === "fulfilled" ? cctvResult.value : { cameras: [], cache: cctvEvent ? { fetchedAt: cctvEvent.fetchedAt || null, usableUntil: cctvEvent.staleUntil || null, retryAt: cctvEvent.retryAt || null, stale: Boolean(cctvEvent.stale || ["stale-if-error", "stale-cooldown"].includes(cctvEvent.state)) } : null };
-  const cctvs = cctvPayload.cameras;
-  if (cctvResult.status === "rejected") errors.push(`CCTV: ${cctvResult.reason?.message || "조회 실패"}`);
-  const cctv = {
-    configured: Boolean(keys.itsApiKey),
-    available: cctvs.length > 0,
-    // 목록이 존재해도 AI 관측 전에는 비가 없다는 근거가 아닙니다.
-    included: cctvs.some((camera) => ["yes", "no", "uncertain"].includes(camera.rainNow)),
-    fetchedAt: cctvPayload.cache?.fetchedAt || null,
-    usableUntil: cctvPayload.cache?.usableUntil || null,
-    retryAt: cctvPayload.cache?.retryAt || null,
-    stale: Boolean(cctvPayload.cache?.stale),
-  };
-  const aviation = aviationResult.status === "fulfilled" ? aviationResult.value : { metar: [], taf: [] };
-  if (aviationResult.status === "rejected") errors.push(`METAR/TAF: ${aviationResult.reason?.message || "조회 실패"}`);
-  const refresh = refreshMetadata(cacheTrace);
-  return { route, cctvs, cctv, aviation, errors, refresh: { ...refresh, stale: Boolean(cctv.stale || refresh.stale), retryAt: cctv.retryAt || refresh.retryAt, failed: Boolean(keys.itsApiKey && errors.some(error => String(error).startsWith("CCTV:"))) }, cacheDiagnostics: cacheSummary(cacheTrace) };
+  const cacheTrace = [], errors = [];
+  let aviation = {metar:[],taf:[]};
+  try {
+    if(haversine(route.lat,route.lon,37.5082,127.1001)<=65)aviation=await getAviation(cacheTrace);
+  } catch { errors.push('METAR/TAF: 자료 조회 실패'); }
+  // CCTV acquisition is independent: /api/cctv/prepare -> browser ITS -> /complete.
+  return {route,cctvs:[],cctv:{configured:Boolean(LOCAL_KEYS.itsApiKey),available:false,included:false},
+    aviation,errors,refresh:refreshMetadata(cacheTrace),cacheDiagnostics:cacheSummary(cacheTrace)};
 }
 
 async function snapshot(body) {
@@ -1223,10 +1131,19 @@ async function sendRadarGraphic(res, minutes) {
 
 async function downloadImage(url, filePath) {
   if (!knownCctvUrls.has(url)) throw new Error("현재 조회 목록에 없는 CCTV 주소입니다.");
-  const response = await fetch(url, {
-    signal: timeoutSignal(20_000), redirect: "follow",
-    headers: { "User-Agent": "RunCast-Jamsil/0.1", Accept: "image/*", "Cache-Control": "no-cache" },
-  });
+  const signal = timeoutSignal(20_000);
+  let response;
+  for (let redirects = 0; redirects <= 3; redirects++) {
+    if (!validCctvUrl(url)) throw new Error("허용되지 않은 CCTV 주소입니다.");
+    response = await fetch(url, {
+      signal, redirect: "manual",
+      headers: { "User-Agent": "RunCast-Jamsil/0.1", Accept: "image/*", "Cache-Control": "no-cache" },
+    });
+    if (![301,302,303,307,308].includes(response.status)) break;
+    await response.body?.cancel();
+    if (redirects === 3 || !response.headers.get('location')) throw new Error("CCTV 영상 이동 주소를 확인하지 못했습니다.");
+    url = new URL(response.headers.get('location'), url).href;
+  }
   if (!response.ok) throw new Error(`CCTV 이미지 다운로드 실패 (${response.status})`);
   const type = response.headers.get("content-type") || "";
   if (!type.startsWith("image/")) throw new Error(`정지영상이 아닙니다 (${type || "형식 불명"}). ITS에서 정지영상 유형을 신청해야 합니다.`);
@@ -1353,7 +1270,7 @@ async function getStatus() {
 async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
-    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/refresh-scheduler.mjs", "assets/ui-icons.mjs", "sw.js",
+    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/refresh-scheduler.mjs", "assets/ui-icons.mjs", "assets/cctv-domain.mjs", "assets/cctv-client.mjs", "sw.js",
     "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/apple-touch-icon-v2.png", "assets/pwa-icon-192.png",
     "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png",
     "assets/apple-startup-1320x2868.png", "assets/apple-startup-1206x2622.png",
@@ -1391,6 +1308,14 @@ export async function requestHandler(req, res) {
       },
       runtime: { mode: RUNTIME_MODE, aiEnabled: LOCAL_AI_ENABLED, aiLocalOnly: true },
     });
+    if (req.method === "POST" && url.pathname === "/api/cctv/prepare") {
+      const body=await readJson(req);
+      return sendJson(res,200,cctvBroker.prepare(resolveLocation(body)));
+    }
+    if (req.method === "POST" && url.pathname === "/api/cctv/complete") {
+      const body=await readJson(req);
+      return sendJson(res,200,cctvBroker.complete(resolveLocation(body),body));
+    }
     if (req.method === "GET" && url.pathname === "/api/status") return sendJson(res, 200, await getStatus());
     if (req.method === "GET" && url.pathname === "/api/radar") return await sendRadarGraphic(res, Number(url.searchParams.get("minutes")));
     if (req.method === "POST" && url.pathname === "/api/weekly-forecast") return sendJson(res, 200, await weeklyForecast(await readJson(req)));

@@ -1,3 +1,4 @@
+import { loadCctv } from './cctv-client.mjs';
 import { ROUTES, locationKey, hourlyTemperatureAt, roundTemperature, evaluateRunWindow, runSampleMetrics } from './weather-domain.mjs';
 import { createExtras, storage, preferences, readForecastCache, writeForecastCache } from './mobile-extra.js';
 import { createRefreshScheduler, REFRESH_INTERVALS, REFRESH_TIMEOUTS } from './refresh-scheduler.mjs';
@@ -267,7 +268,8 @@ function renderEvidence() {
   const modelsCopy=models?.availableModels
     ? `출발 무렵 ${models.availableModels}개 중 ${models.wetVotes || 0}개가 비를 예상해요`
     : "비교할 다른 예보가 없어요";
-  $('#evidenceSummary').innerHTML=`<div class="evidence-item"><b>노면</b><small>${escapeHtml(recentCopy)}</small></div><div class="evidence-item"><b>다른 예보</b><small>${escapeHtml(modelsCopy)}</small></div>`;
+  const surfaceRow=mode?.immediate ? `<div class="evidence-item"><b>노면</b><small>${escapeHtml(recentCopy)}</small></div>` : '';
+  $('#evidenceSummary').innerHTML=`${surfaceRow}<div class="evidence-item"><b>다른 예보</b><small>${escapeHtml(modelsCopy)}</small></div>`;
   const officialSource=first?.sourceLabel || "기상청 예보 자료 없음";
   const issuedAt=first?.issuedAt, targetAt=first?.sourceTime;
   const officialDetail=[officialSource,issuedAt?`발표 ${extras.stamp(issuedAt)}`:null,targetAt?`예보 시각 ${extras.stamp(targetAt)}`:null].filter(Boolean).join(" · ");
@@ -279,7 +281,7 @@ function renderEvidence() {
     : thermal?.status==='loading' ? "Open-Meteo · 기온 자료를 불러오는 중"
     : "Open-Meteo · 기온 자료 없음";
   const surfaceDetail=recent ? `최근 강수와 시간대 예보로 노면을 추정해요. CCTV 원본은 현장을 영상으로 확인할 때 쓰며, 아직 분석하지 않은 영상은 판단에 반영하지 않아요.` : "최근 강수 자료가 없어 노면 상태를 추정하지 않아요.";
-  $('#evidenceDetail').innerHTML=`<div class="detail-fact"><b>눈·비: 기상청</b><span>${escapeHtml(officialDetail)}</span></div><div class="detail-fact"><b>기온: ${escapeHtml(thermalSource)}</b><span>${escapeHtml(thermalDetail)}</span></div><div class="detail-fact"><b>모델별 출발 무렵</b><span>${modelDetail}</span></div><div class="detail-fact"><b>노면 추정</b><span>${escapeHtml(surfaceDetail)}</span></div><p class="detail-note">기온은 출발·복귀 정시의 시간별 예보를 사용하고 정시 사이에는 해당 시간대 예보를 보여드려요. 강수확률은 러닝 구간 최대값, 강수량은 1시간 예상 누적량이에요. 눈·비는 기상청, 기온·체감·옷차림은 Open-Meteo 자료를 사용해요.</p>`;
+  $('#evidenceDetail').innerHTML=`<div class="detail-fact"><b>눈·비: 기상청</b><span>${escapeHtml(officialDetail)}</span></div><div class="detail-fact"><b>기온: ${escapeHtml(thermalSource)}</b><span>${escapeHtml(thermalDetail)}</span></div><div class="detail-fact"><b>모델별 출발 무렵</b><span>${modelDetail}</span></div>${mode?.immediate ? `<div class="detail-fact"><b>노면 추정</b><span>${escapeHtml(surfaceDetail)}</span></div>` : ''}<p class="detail-note">기온은 출발·복귀 정시의 시간별 예보를 사용하고 정시 사이에는 해당 시간대 예보를 보여드려요. 강수확률은 러닝 구간 최대값, 강수량은 1시간 예상 누적량이에요. 눈·비는 기상청, 기온·체감·옷차림은 Open-Meteo 자료를 사용해요.</p>`;
 }
 
 function cctvStatus(camera) {
@@ -297,6 +299,10 @@ function renderCctv() {
   if(context?.status === "loading") {
     rail.innerHTML='<div class="cctv-state"><span class="loading-orbit"></span><span>CCTV를 불러오고 있어요</span></div>';
     more.hidden=true;
+  } else if(context?.cctv?.pending && !cameras.length) {
+    rail.innerHTML='<div class="cctv-state">CCTV 목록을 갱신하고 있어요 <button id="retryCctv">다시 확인</button></div>';
+    more.hidden=true;
+    $('#retryCctv')?.addEventListener('click',()=>void refreshContext(true));
   } else if(cctvFailure || context?.status === "error") {
     rail.innerHTML='<div class="cctv-state">CCTV를 불러오지 못했어요 <button id="retryCctv">다시 시도</button></div>';
     more.hidden=true;
@@ -383,14 +389,20 @@ function refreshContext(manual = false) {
   const keepList=Array.isArray(previous?.cctvs);
   const cachedRetryAt=previous?.cctv?.retryAt || previous?.cctv?.serverRetryAt;
   const requestOptions={manual,intervalMs:REFRESH_INTERVALS.context,dataAt:previous?.cctv?.fetchedAt,serverRetryAt:cachedRetryAt,fetcher:async({signal})=>{
-    const response=await fetch("/api/mobile-context", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location }), signal });
-    const context=await response.json();
-    if (!response.ok) {
-      const error=new Error(context.error||"CCTV 자료 요청 실패");
-      applyRetryMetadata(error, context, response);
-      throw error;
-    }
-    return context;
+    const aviationRequest=(async()=>{
+      try {
+        const response=await fetch("/api/mobile-context", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({location}),signal});
+        if(!response.ok)throw new Error('항공기상 조회 실패');
+        return await response.json();
+      } catch(error){if(signal.aborted)throw error;return {aviation:{metar:[],taf:[]},errors:['METAR/TAF: 자료 조회 실패']};}
+    })();
+    const cameraRequest=loadCctv({location,signal,onReady:context=>{
+      if(signal.aborted || key!==locationKey(state.location))return;
+      state.context={...previous,...context,locationKey:key,status:'ready',aviation:previous?.aviation||{metar:[],taf:[]}};
+      renderCctv();if(state.naverMap)drawMapOverlays();
+    }});
+    const [context,cameras]=await Promise.all([aviationRequest,cameraRequest]);
+    return {...context,...cameras,aviation:context.aviation,errors:[...(context.errors||[]),...(cameras.errors||[])]};
   }};
   const eligibility=refreshScheduler.eligibility('context',key,requestOptions);
   if(!eligibility.allowed)return Promise.resolve({status:'skipped',reason:eligibility.reason,meta:eligibility.meta});
@@ -944,7 +956,7 @@ async function boot() {
     state.configured = config.configured || {};
     renderConnectionStatus();
     $("#settingsIntro").textContent = state.runtime.mode === "public"
-      ? "공개 배포 모드예요. 비밀 키와 AI 기능은 서버에서 관리해요."
+      ? "공개 배포 모드예요. CCTV 목록은 기기에서 직접 조회해요."
       : "로컬 테스트는 프로젝트의 .env.local에 키를 입력한 뒤 서버를 재시작해 주세요. .env와 실행 환경변수도 사용할 수 있어요.";
   } catch { $("#settingsIntro").textContent = "데이터 연결 설정을 확인하지 못했어요. 서버 실행 상태를 확인해 주세요."; renderConnectionStatus(); }
   try {

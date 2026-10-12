@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ROUTES, resolveLocation, isSupportedLocation, normalizeWeekly, recommendRunningWear, hourlyBucketEpoch, hourlyPointAt, hourlyTemperatureAt, roundTemperature, evaluateRunWindow } from '../assets/weather-domain.mjs';
@@ -232,4 +233,86 @@ test('legacy preferences preserve location and comfort while discarding old list
   globalThis.localStorage={getItem:k=>memory.get(k)||null,setItem:(k,v)=>memory.set(k,v)};
   try{const{preferences}=await import('../assets/mobile-extra.js?legacy-test');assert.equal(preferences.location.name,'기존 이름');assert.equal(preferences.comfort,'hot');assert.equal(Object.hasOwn(preferences,'favorites'),false);}
   finally{delete globalThis.localStorage;}
+});
+
+
+function minorRainWindow() {
+  return Array.from({length:3},(_,index)=>({
+    minutes:1320 + index*30, mm:0, probability:index===2?0:20,
+    multiModel:{models:[
+      {id:'ecmwf', probability:8, amount:0},
+      {id:'gfs', probability:6, amount:index===2?0:0.3},
+      {id:'jma', probability:null, amount:0},
+      {id:'icon', probability:8, amount:0},
+    ]},
+  }));
+}
+
+test('a single trace-rain model keeps the run green with an explicit explanation',()=>{
+  const samples=minorRainWindow();
+  const {decision,summary}=evaluateRunWindow(samples,[],{requireSamples:3});
+  assert.equal(decision.level,'green');
+  assert.equal(decision.reasonCode,'low');
+  assert.equal(decision.headline,'눈·비 걱정 적어요');
+  assert.equal(decision.reason,'비교 예보 4개 중 1개는 소량의 비를 예상해요.');
+  assert.equal(summary.officialProbabilityMax,20);
+  assert.equal(summary.estimatedAmount,0);
+  assert.equal(summary.disagreement,true); // Preserve the underlying model comparison.
+  assert.equal(makeDecision(samples.map((sample,index)=>({...sample,minutes:index*30}))).reason,decision.reason);
+  // No disagreement: preserve the original low-rain copy.
+  for(const sample of samples)sample.multiModel.models[1].amount=0;
+  assert.equal(evaluateRunWindow(samples).decision.reason,'러닝 시간대 눈·비 걱정이 적어요.');
+});
+
+test('the minor-rain exception checks the entire run and conservative boundaries',()=>{
+  const guards=[
+    ['0.5mm',s=>s.multiModel.models[1].amount=0.5],
+    ['50 percent',s=>s.multiModel.models[1].probability=50],
+    ['two wet models',s=>{s.multiModel.models[0].amount=0.2;s.multiModel.models[1].amount=0.3;}],
+    ['official probability above 30',s=>s.probability=31],
+    ['official precipitation',s=>s.mm=0.1],
+    ['missing official probability',s=>s.probability=null],
+    ['missing official amount',s=>s.mm=null],
+    ['fewer than four models',s=>s.multiModel.models.pop()],
+    ['missing model amount',s=>s.multiModel.models[0].amount=null],
+  ];
+  for(const [name,change] of guards){
+    const samples=minorRainWindow();
+    change(samples[2]); // A dry departure must not hide a concerning return.
+    assert.equal(evaluateRunWindow(samples).decision.level,'yellow',name);
+  }
+  const boundary=minorRainWindow();
+  for(const sample of boundary){sample.probability=30;sample.multiModel.models[1].amount=0.49;}
+  assert.equal(evaluateRunWindow(boundary).decision.level,'green');
+});
+
+test('minor model differences cannot override snow, heavy rain, probability or wet surfaces',()=>{
+  for(const [change,reason,level] of [
+    [s=>s.precipitationType=3,'snow','red'],
+    [s=>s.mm=8,'rain_heavy','red'],
+    [s=>s.probability=80,'probability','yellow'],
+    [s=>s.previousHourMm=1,'surface','yellow'],
+  ]){
+    const samples=minorRainWindow();change(samples[1]);
+    const {decision}=evaluateRunWindow(samples);
+    assert.equal(decision.reasonCode,reason);assert.equal(decision.level,level);
+  }
+});
+
+test('current surface evidence appears only for an immediate run, including expanded details',async()=>{
+  const source=await readFile(new URL('../assets/mobile.js',import.meta.url),'utf8');
+  const render=source.slice(source.indexOf('function renderEvidence()'),source.indexOf('\nfunction ',source.indexOf('function renderEvidence()')+1));
+  for(const immediate of [true,false]){
+    const nodes={'#evidenceSummary':{},'#evidenceDetail':{}};
+    runInNewContext(`${render}; renderEvidence();`,{
+      $:selector=>nodes[selector],escapeHtml:String,extras:{stamp:String},
+      state:{location:{},thermal:null},locationKey:()=>'',
+      evidenceRows:()=>({mode:{immediate},first:{},models:null,recent:{recentTotalMm:0},surface:{short:'건조 추정'}}),
+    });
+    assert.equal(nodes['#evidenceSummary'].innerHTML.includes('<b>노면</b>'),immediate);
+    assert.equal(nodes['#evidenceSummary'].innerHTML.includes('최근 3시간'),immediate);
+    assert.equal(nodes['#evidenceDetail'].innerHTML.includes('<b>노면 추정</b>'),immediate);
+    assert.ok(nodes['#evidenceSummary'].innerHTML.includes('다른 예보'));
+    assert.ok(nodes['#evidenceDetail'].innerHTML.includes('눈·비: 기상청'));
+  }
 });

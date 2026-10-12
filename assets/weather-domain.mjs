@@ -274,6 +274,21 @@ export function evaluateRunWindow(samples = [], cctvs = [], options = {}) {
     ? Math.max(officialProbabilityMaxRaw ?? 0, modelProbabilityAverage ?? 0)
     : null;
   const disagreement = metrics.some(metric => metric.disagreement);
+  // Only suppress the disagreement warning when every point in the run has
+  // complete amount data and a single, small wet outlier at most.
+  const minorModelDifference = disagreement && list.every((sample, index) => {
+    const models = runModelEntries(sample);
+    const probability = finiteProbability(sample.probability);
+    const amount = finiteNonNegative(Number.isFinite(sample.villageMm) ? sample.villageMm : sample.mm);
+    return probability != null && probability <= 30 && amount === 0
+      && models.length >= 4 && metrics[index].wetVotes <= 1
+      && models.every(model => finiteNonNegative(model.amount) != null && model.amount < 0.5
+        && (finiteProbability(model.probability) == null || model.probability < 50));
+  });
+  const minorSampleIndex = minorModelDifference ? metrics.findIndex(metric => metric.wetVotes === 1) : -1;
+  const minorModelNote = minorSampleIndex >= 0
+    ? `비교 예보 ${runModelEntries(list[minorSampleIndex]).length}개 중 1개는 소량의 비를 예상해요.`
+    : '';
   const modelDriving = modelProbabilityAverage != null && (officialProbabilityMaxRaw == null || modelProbabilityAverage > officialProbabilityMaxRaw);
   const surfaces = metrics.map(metric => metric.surface);
   const surface = surfaces.includes('recovering') ? 'recovering' : surfaces.includes('wet') ? 'wet' : 'dry';
@@ -316,10 +331,10 @@ export function evaluateRunWindow(samples = [], cctvs = [], options = {}) {
       : { level: 'yellow', reasonCode: 'surface', headline: '노면이 젖어 있을 수 있어요', short: '노면 주의', confidence: 66, reason: '최근 강수 또는 직전 강수로 노면이 젖어 있을 수 있어요.' };
   } else if (chanceKnown && chance >= 60) {
     decision = { level: 'yellow', reasonCode: 'probability', headline: '비 올 가능성이 있어요', short: '가능성', confidence: 64, reason: `강수확률이 ${runRoundFive(chance)}%로 비 올 가능성이 있어요.${reasonForModel}` };
-  } else if (disagreement) {
+  } else if (disagreement && !minorModelDifference) {
     decision = { level: 'yellow', reasonCode: 'uncertain', headline: '예보가 엇갈려요', short: '재확인', confidence: 58, reason: `예보가 엇갈려요. 출발 전에 최신 자료를 확인해 주세요.${reasonForModel}` };
   } else if (cumulative <= 0.2 && peak <= 0.2) {
-    decision = { level: 'green', reasonCode: 'low', headline: '눈·비 걱정 적어요', short: '무난', confidence: 68, reason: '러닝 시간대 눈·비 걱정이 적어요.' };
+    decision = { level: 'green', reasonCode: 'low', headline: '눈·비 걱정 적어요', short: '무난', confidence: 68, reason: minorModelNote || '러닝 시간대 눈·비 걱정이 적어요.' };
   } else {
     decision = { level: 'green', reasonCode: 'light', headline: '약한 비가 예상돼요', short: '약한 비', confidence: 60, reason: `러닝 시간대 약한 비가 예상돼요. 예상 누적 ${cumulative}mm예요.${reasonForModel}` };
   }
