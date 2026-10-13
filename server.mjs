@@ -1054,7 +1054,7 @@ async function mobileContext(body) {
   try {
     if(haversine(route.lat,route.lon,37.5082,127.1001)<=65)aviation=await getAviation(cacheTrace);
   } catch { errors.push('METAR/TAF: 자료 조회 실패'); }
-  // CCTV acquisition is independent: /api/cctv/prepare -> browser ITS -> /complete.
+  // CCTV acquisition is independent: /api/cctv-prepare -> browser ITS -> /api/cctv-complete.
   return {route,cctvs:[],cctv:{configured:Boolean(LOCAL_KEYS.itsApiKey),available:false,included:false},
     aviation,errors,refresh:refreshMetadata(cacheTrace),cacheDiagnostics:cacheSummary(cacheTrace)};
 }
@@ -1308,11 +1308,11 @@ export async function requestHandler(req, res) {
       },
       runtime: { mode: RUNTIME_MODE, aiEnabled: LOCAL_AI_ENABLED, aiLocalOnly: true },
     });
-    if (req.method === "POST" && url.pathname === "/api/cctv/prepare") {
+    if (req.method === "POST" && url.pathname === "/api/cctv-prepare") {
       const body=await readJson(req);
       return sendJson(res,200,cctvBroker.prepare(resolveLocation(body)));
     }
-    if (req.method === "POST" && url.pathname === "/api/cctv/complete") {
+    if (req.method === "POST" && url.pathname === "/api/cctv-complete") {
       const body=await readJson(req);
       return sendJson(res,200,cctvBroker.complete(resolveLocation(body),body));
     }

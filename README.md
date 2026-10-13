@@ -114,9 +114,9 @@ ITS 네트워크 요청 실패는 Vercel Logs에 `[ITS_HTTP]` 경고 한 줄로 
 
 ## CCTV 목록: 브라우저 직접 조회
 
-1. `POST /api/cctv/prepare {location}`: 유효한 목록 캐시가 있으면 반환합니다. 없으면 25초짜리 일회용 조회 토큰과 ITS 요청 정보를 반환합니다 (`Cache-Control: no-store`).
+1. `POST /api/cctv-prepare {location}`: 유효한 목록 캐시가 있으면 반환합니다. 없으면 25초짜리 일회용 조회 토큰과 ITS 요청 정보를 반환합니다 (`Cache-Control: no-store`).
 2. 브라우저가 ITS HTTPS API를 직접 호출합니다. 최대 12초, 2MB로 제한하며 CORS가 허용되어야 합니다. 주변 15km의 가까운 8개를 즉시 표시합니다.
-3. `POST /api/cctv/complete {location,token,rows}`: 서버가 필드/개수/좌표/영상 URL을 재검증하고 목록만 메모리에 저장합니다. 실패 보고는 `{location,token,failed:true}`로 전달합니다.
+3. `POST /api/cctv-complete {location,token,rows}`: 서버가 필드/개수/좌표/영상 URL을 재검증하고 목록만 메모리에 저장합니다. 실패 보고는 `{location,token,failed:true}`로 전달합니다.
 
 - Redis/DB 추가 설정은 없습니다. 성공 25초 캐시, 이전 목록 최대 45초, 실패 후 20초 대기이며 모든 시간은 서버 조회 토큰 발급 시각을 기준으로 계산합니다(실패 대기는 실패 보고 시각 기준).
 - 캐시와 조회 토큰은 **인스턴스별 메모리**입니다. 다른 Vercel 인스턴스는 캐시를 못 찾고 다시 조회할 수 있습니다. 저장 요청이 다른 인스턴스에 도착해 409가 되어도 브라우저에서 받은 목록은 표시합니다. 공용 캐시나 전역 중복 방지는 보장하지 않습니다.
