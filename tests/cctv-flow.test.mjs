@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {Readable} from 'node:stream';
 import {createCctvBroker} from '../lib/cctv-broker.mjs';
 import {loadCctv} from '../assets/cctv-client.mjs';
 import {CCTV_POLICY as P,selectCctvRows,validCctvUrl} from '../assets/cctv-domain.mjs';
@@ -13,8 +14,8 @@ function transport(broker,{rejectUpload=false,itsError=false,onUpload=()=>{}}={}
   const calls=[];
   return {calls,fetch:async(url,options)=>{
     const path=String(url);calls.push(path.startsWith('https:')?'ITS':path);
-    if(path==='/api/cctv/prepare')return json(broker.prepare(point));
-    if(path==='/api/cctv/complete'){
+    if(path==='/api/cctv-prepare')return json(broker.prepare(point));
+    if(path==='/api/cctv-complete'){
       onUpload();
       if(rejectUpload)return new Response('',{status:409});
       return json(broker.complete(point,JSON.parse(options.body)));
@@ -75,9 +76,9 @@ test('browser displays ITS result before upload; subsequent call uses BE cache o
   const io=transport(broker,{onUpload:()=>assert.equal(shown,true)});
   const result=await loadCctv({location:point,fetchImpl:io.fetch,onReady:()=>shown=true});
   assert.equal(result.cctvs.length,1);assert.equal(result.acquisition,undefined);
-  assert.deepEqual(io.calls,['/api/cctv/prepare','ITS','/api/cctv/complete']);
+  assert.deepEqual(io.calls,['/api/cctv-prepare','ITS','/api/cctv-complete']);
   io.calls.length=0;await loadCctv({location:point,fetchImpl:io.fetch});
-  assert.deepEqual(io.calls,['/api/cctv/prepare']);
+  assert.deepEqual(io.calls,['/api/cctv-prepare']);
 });
 
 test('upload reaching another instance cannot erase the successful browser result',async()=>{
@@ -90,7 +91,7 @@ test('ITS failure reports cooldown and does not trigger an automatic retry loop'
   const {broker}=fixture();const io=transport(broker,{itsError:true});
   const failed=await loadCctv({location:point,fetchImpl:io.fetch});assert.equal(failed.refresh.failed,true);assert.ok(failed.refresh.retryAt);
   io.calls.length=0;await loadCctv({location:point,fetchImpl:io.fetch});
-  assert.deepEqual(io.calls,['/api/cctv/prepare']);
+  assert.deepEqual(io.calls,['/api/cctv-prepare']);
 });
 
 test('lifecycle abort stops acquisition without reporting failure or uploading',async()=>{
@@ -114,4 +115,36 @@ test('oversized ITS response is rejected before publication',async()=>{
   };
   const result=await loadCctv({location:point,fetchImpl,onReady:()=>displayed=true});
   assert.equal(result.refresh.failed,true);assert.equal(displayed,false);assert.equal(count,3);
+});
+
+test('browser acquisition reaches the deployed handler through single-level API routes',async()=>{
+  const previous={VERCEL:process.env.VERCEL,ITS_API_KEY:process.env.ITS_API_KEY};
+  process.env.VERCEL='1';
+  process.env.ITS_API_KEY='route-test-key';
+  try {
+    const {default:handler}=await import('../api/[...path].mjs');
+    const routes=[];
+    const fetchImpl=async(url,options)=>{
+      if(url instanceof URL)return json({response:{data:[camera]}});
+      assert.match(url,/^\/api\/[^/]+$/,'CCTV endpoints must use the existing single-level deployment route');
+      routes.push(url);
+      const request=Object.assign(Readable.from([Buffer.from(options.body)]),{url,method:options.method,headers:options.headers});
+      let status,headers,body;
+      await handler(request,{writeHead(code,value){status=code;headers=value;},end(value){body=value;}});
+      assert.equal(status,200);
+      assert.equal(headers['Cache-Control'],'no-store');
+      return new Response(body,{status,headers});
+    };
+    const result=await loadCctv({location:point,fetchImpl});
+    assert.equal(result.cctvs.length,1);
+    assert.deepEqual(routes,['/api/cctv-prepare','/api/cctv-complete']);
+    routes.length=0;
+    const cached=await loadCctv({location:point,fetchImpl});
+    assert.equal(cached.cctvs.length,1);
+    assert.deepEqual(routes,['/api/cctv-prepare']);
+  } finally {
+    for(const [key,value] of Object.entries(previous)){
+      if(value===undefined)delete process.env[key];else process.env[key]=value;
+    }
+  }
 });

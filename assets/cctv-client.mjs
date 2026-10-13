@@ -37,7 +37,7 @@ export async function loadCctv({location,signal,fetchImpl=globalThis.fetch,onRea
     } finally {guard.dispose();}
   }
   let prepared;
-  try {prepared=await post('/api/cctv/prepare',{location});}
+  try {prepared=await post('/api/cctv-prepare',{location});}
   catch(error){if(signal?.aborted)throw error;return failure(location,null,new Date(Date.now()+P.failureMs).toISOString());}
   const {acquisition,...cached}=prepared;
   if(!acquisition){
@@ -57,13 +57,13 @@ export async function loadCctv({location,signal,fetchImpl=globalThis.fetch,onRea
   } catch(error) {
     if(signal?.aborted)throw error;
     let retryAt=new Date(Date.now()+P.failureMs).toISOString();
-    try{const failed=await post('/api/cctv/complete',{location,token:acquisition.token,failed:true});retryAt=failed.cctv?.retryAt||retryAt;}catch{}
+    try{const failed=await post('/api/cctv-complete',{location,token:acquisition.token,failed:true});retryAt=failed.cctv?.retryAt||retryAt;}catch{}
     return failure(location,cached,retryAt);
   } finally {guard.dispose();}
   if(signal?.aborted)throw new DOMException('Aborted','AbortError');
   const fetchedAt=new Date(Date.parse(acquisition.expiresAt)-P.leaseMs).toISOString();
   const fresh=cctvResult(rows,location,{fetchedAt});
   onReady(fresh); // Show before cache upload, even when a different instance rejects it.
-  try{await post('/api/cctv/complete',{location,token:acquisition.token,rows});}catch{}
+  try{await post('/api/cctv-complete',{location,token:acquisition.token,rows});}catch{}
   return fresh;
 }
