@@ -16,7 +16,7 @@ const state = {
   overlays: [], radarOverlay: null, radarFrames: [], radarFrameIndex: 0,
   radarFrameKey: null, radarSequenceCache: new Map(),
   radarPlaying: true, radarTimer: null, radarLoadToken: 0,
-  refreshController: null, contextController: null, analysisController: null, lifecycleTimer: null, refreshToken: 0, analysisToken: 0,
+  refreshController: null, contextController: null, contextRetryTimer: null, analysisController: null, lifecycleTimer: null, refreshToken: 0, analysisToken: 0,
   usingCachedData: false, thermal: { locationKey: locationKey(preferences.location), status: "idle", data: null, error: null }, context: { locationKey: locationKey(preferences.location), status: "idle", cctvs: null, cctv: null, aviation: null, errors: [] }, cctvExpanded: false,
 };
 const refreshScheduler = createRefreshScheduler();
@@ -177,7 +177,7 @@ function currentAviation() {
 
 function contextNeedsRefresh() {
   const context=currentContext();
-  if (!context || context.status === "idle" || context.status === "error") return true;
+  if (!context || ['idle','waiting','error'].includes(context.status)) return true;
   if (context.status === "loading" || context.status === "refreshing") return false;
   if (context.errors?.some(error=>String(error).startsWith("CCTV:"))) return true;
   const usableUntil=Date.parse(context.cctv?.usableUntil || "");
@@ -299,6 +299,10 @@ function renderCctv() {
   if(context?.status === "loading") {
     rail.innerHTML='<div class="cctv-state"><span class="loading-orbit"></span><span>CCTV를 불러오고 있어요</span></div>';
     more.hidden=true;
+  } else if(context?.status === 'waiting' && !cameras.length) {
+    rail.innerHTML='<div class="cctv-state">잠시 후 CCTV를 다시 조회해요 <button id="retryCctv">다시 시도</button></div>';
+    more.hidden=true;
+    $('#retryCctv')?.addEventListener('click',()=>void refreshContext(true));
   } else if(context?.cctv?.pending && !cameras.length) {
     rail.innerHTML='<div class="cctv-state">CCTV 목록을 갱신하고 있어요 <button id="retryCctv">다시 확인</button></div>';
     more.hidden=true;
@@ -307,8 +311,11 @@ function renderCctv() {
     rail.innerHTML='<div class="cctv-state">CCTV를 불러오지 못했어요 <button id="retryCctv">다시 시도</button></div>';
     more.hidden=true;
     $('#retryCctv')?.addEventListener('click',()=>void refreshContext(true));
-  } else if(!context?.cctv?.configured) {
+  } else if(context?.cctv?.configured === false) {
     rail.innerHTML='<div class="cctv-state">CCTV 연결이 설정되지 않았어요</div>';
+    more.hidden=true;
+  } else if(!context?.cctv) {
+    rail.innerHTML='<div class="cctv-state">CCTV 목록을 확인하고 있어요</div>';
     more.hidden=true;
   } else if(!cameras.length) {
     rail.innerHTML='<div class="cctv-state">이 위치 주변에서 제공되는 CCTV가 없어요</div>';
@@ -383,6 +390,19 @@ function render() {
   renderCctv();renderAviation();if(state.naverMap)drawMapOverlays();
 }
 
+function scheduleContextRetry(key, meta) {
+  clearTimeout(state.contextRetryTimer);state.contextRetryTimer=null;
+  // A reload restores request gates, but not CCTV results. Wait for those gates
+  // without treating missing data as missing credentials or polling the API.
+  const due=Math.max(meta?.nextEligibleAt||0,meta?.serverRetryAt||0,
+    meta?.lastSuccessAt == null ? 0 : meta.lastSuccessAt+REFRESH_INTERVALS.context);
+  if(!pageCanRefresh() || due<=Date.now())return;
+  state.contextRetryTimer=setTimeout(()=>{
+    state.contextRetryTimer=null;
+    if(pageCanRefresh() && key===locationKey(state.location) && ['decision','map'].includes(state.view))void refreshContext();
+  },due-Date.now()+50);
+}
+
 function refreshContext(manual = false) {
   if (!pageCanRefresh()) return Promise.resolve({ status: "skipped", reason: "lifecycle" });
   const location={...state.location}, key=locationKey(location), previous=currentContext();
@@ -405,7 +425,15 @@ function refreshContext(manual = false) {
     return {...context,...cameras,aviation:context.aviation,errors:[...(context.errors||[]),...(cameras.errors||[])]};
   }};
   const eligibility=refreshScheduler.eligibility('context',key,requestOptions);
-  if(!eligibility.allowed)return Promise.resolve({status:'skipped',reason:eligibility.reason,meta:eligibility.meta});
+  if(!eligibility.allowed){
+    if(!previous?.cctvs?.length && previous?.cctv?.configured !== false){
+      state.context={...previous,locationKey:key,status:'waiting'};
+      renderCctv();
+      scheduleContextRetry(key,eligibility.meta);
+    }
+    return Promise.resolve({status:'skipped',reason:eligibility.reason,meta:eligibility.meta});
+  }
+  clearTimeout(state.contextRetryTimer);state.contextRetryTimer=null;
   const request=refreshScheduler.request('context',key,requestOptions);
   if(eligibility.shared)return request;
   state.context=keepList ? { ...previous, status:"refreshing" } : { locationKey:key, status:"loading", cctvs:null, cctv:null, aviation:null, errors:[] };
@@ -435,7 +463,7 @@ async function refreshData(force = true) {
     state.loading=false;$('#refreshBtn').disabled=false;render();
     return { status: "skipped", reason: "lifecycle" };
   }
-  if((state.view==='decision'||state.view==='map')&&contextNeedsRefresh()) void refreshContext();
+  if((state.view==='decision'||state.view==='map')&&contextNeedsRefresh()) void refreshContext(force);
   if (!state.data && cached) { state.data = normalizeCoreData(cached,currentCctvs()); state.usingCachedData = true; render(); }
   state.loading = true;
   $("#refreshBtn").disabled = true;  render();
@@ -483,6 +511,7 @@ const extras = createExtras(state, { toast, switchView, loadNaverSdk, openSheet,
   },
   resetNaverSdk(){state.naverSdkPromise=null;},
   async changeLocation(point) {
+    clearTimeout(state.contextRetryTimer);state.contextRetryTimer=null;
     const previousKey=locationKey(state.location);
     refreshScheduler.cancel('core',previousKey,{intentional:true,reason:'위치 변경'});
     refreshScheduler.cancel('weekly',previousKey,{intentional:true,reason:'위치 변경'});
@@ -967,6 +996,7 @@ async function boot() {
     refreshScheduler.cleanupExpired();
     if (!pageCanRefresh()) {
       syncRadarTimer();
+      clearTimeout(state.contextRetryTimer);state.contextRetryTimer=null;
       clearInterval(state.lifecycleTimer);state.lifecycleTimer=null;
       return;
     }
