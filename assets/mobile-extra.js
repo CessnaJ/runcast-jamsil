@@ -1,4 +1,4 @@
-import { ROUTES, resolveLocation, locationKey, recommendRunningWear, runningIntervals, nextDepartureTime, kstDay, roundTemperature } from './weather-domain.mjs';
+import { ROUTES, resolveLocation, locationKey, recommendRunningWear, runningIntervals, nextDepartureTime, kstDay, roundTemperature, yesterdayFeelsLikeComparison } from './weather-domain.mjs';
 import { createRefreshScheduler } from './refresh-scheduler.mjs';
 import { icon } from './ui-icons.mjs';
 const $ = selector => document.querySelector(selector);
@@ -58,8 +58,7 @@ export function createExtras(state, hooks) {
   const refreshScheduler=hooks.refreshScheduler || createRefreshScheduler();
   let selectedDay='', selectedTime='', preferredHour=+nextDepartureTime().slice(11,13), showWind=false;
   let pickerMap=null, draft={...state.location}, dialogToken=0, lastDay=kstDay();
-  const daySelections = new Map();
-  const solarMigrationAttempts = new Set();
+  const schemaMigrationAttempts = new Set();
   const persist=()=>{if(!storage.write('runcast.preferences.v1',preferences))hooks.toast('저장 공간을 사용할 수 없어 이번 실행에만 적용돼요');};
   const kstDate=date=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(date));
   const stamp=(date,reference=new Date())=>{
@@ -73,7 +72,7 @@ export function createExtras(state, hooks) {
     const previousKey=weeklyKey;
     preferences.location=point;persist();
     if (previousKey) refreshScheduler?.cancel('weekly',previousKey,{intentional:true,reason:'위치 변경'});
-    ++token;pending=null;loading=false;weekly=null;weeklyKey='';lastRenderedSelectedTime='';weeklyStatus='idle';selectedDay='';selectedTime='';daySelections.clear();
+    ++token;pending=null;loading=false;weekly=null;weeklyKey='';lastRenderedSelectedTime='';weeklyStatus='idle';selectedDay='';selectedTime='';
     publishThermal('idle');
     closePicker();const request=hooks.changeLocation(point);updateLocationBar();renderWeekly();
     if(state.view==='weekly')void loadWeekly();await request;
@@ -114,12 +113,12 @@ export function createExtras(state, hooks) {
     if(key!==weeklyKey){++token;pending=null;loading=false;weekly=readForecastCache('weekly',key);weeklyKey=key;publishThermal(weekly?'ready':'idle');renderWeeklyStamp();}
     if(loading&&key===weeklyKey&&pending)return pending;
     if(hooks.canRefresh&&!hooks.canRefresh()){if(weekly){publishThermal(weeklyStatus==='stale'?'stale':'ready');renderWeeklyStamp();}syncBusy();return weekly;}
-    const upgradeSolar=weekly?.daily?.some(day=>!Object.hasOwn(day,'sunrise')||!Object.hasOwn(day,'sunset'))&&!solarMigrationAttempts.has(key);
-    if(upgradeSolar)solarMigrationAttempts.add(key);
-    const fresh=weekly&&!upgradeSolar&&Date.now()<Date.parse(weekly.expiresAt)&&weekly.daily[0]?.date===kstDay();
+    const migrationKey=`${key}:${kstDay()}`;
+    const upgradeSchema=weekly && (weekly.schemaVersion!==2 || (weekly.baseDate||weekly.daily[0]?.date)!==kstDay() || weekly.daily?.some(day=>!Object.hasOwn(day,'sunrise')||!Object.hasOwn(day,'sunset')))&&!schemaMigrationAttempts.has(migrationKey);
+    const fresh=weekly&&!upgradeSchema&&Date.now()<Date.parse(weekly.expiresAt)&&(weekly.baseDate||weekly.daily[0]?.date)===kstDay();
     const meta=refreshScheduler.getMeta('weekly',key);
     if(!force&&fresh&&(!meta?.nextEligibleAt||Date.now()<meta.nextEligibleAt)){publishThermal('ready');renderWeeklyStamp();syncBusy();return weekly;}
-    const requestOptions={manual:force||upgradeSolar,intervalMs:30*60_000,dataAt:weekly?.fetchedAt,expiresAt:weekly?.expiresAt,serverRetryAt:weekly?.refresh?.retryAt||weekly?.cache?.retryAt,fetcher:async({signal})=>{
+    const requestOptions={manual:force||upgradeSchema,intervalMs:30*60_000,dataAt:weekly?.fetchedAt,expiresAt:weekly?.expiresAt,serverRetryAt:weekly?.refresh?.retryAt||weekly?.cache?.retryAt,fetcher:async({signal})=>{
       const response=await fetch('/api/weekly-forecast',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:state.location}),signal});
       const data=await response.json();if(!response.ok){const error=Error(data.error||'주간 예보 조회 실패');applyRetryMetadata(error,data,response);throw error;}return data;
     }};
@@ -131,6 +130,7 @@ export function createExtras(state, hooks) {
       return weekly;
     }
     if(eligibility.shared&&pending)return pending;
+    if(upgradeSchema)schemaMigrationAttempts.add(migrationKey);
     const current=++token;loading=true;publishThermal('loading');renderWeeklyStamp();if(!weekly||!$('#wearCard'))renderWeekly();syncBusy();
     const request=refreshScheduler?.request('weekly',key,requestOptions);
     pending=(async()=>{
@@ -160,9 +160,10 @@ export function createExtras(state, hooks) {
   }
   function syncBusy(){if(state.view==='weekly')hooks.setBusy(loading);}
   function chooseInitial(days) {
-    const next=nextDepartureTime();
-    if(!selectedDay||lastDay!==kstDay()) {selectedDay=days.some(d=>d.date===next.slice(0,10))?next.slice(0,10):days[0]?.date;selectedTime=next;preferredHour=+next.slice(11,13);}
-    if(!days.some(d=>d.date===selectedDay)){selectedDay=days[0]?.date;selectedTime='';}
+    const today=kstDay();let next=nextDepartureTime();
+    if(next.slice(0,10)!==today)next=`${today}T23:00:00+09:00`;
+    if(!selectedDay||lastDay!==kstDay()) {selectedDay=days.some(d=>d.date===next.slice(0,10))?next.slice(0,10):days.find(d=>d.date>=today)?.date;selectedTime=next;preferredHour=+next.slice(11,13);}
+    if(!days.some(d=>d.date===selectedDay)){selectedDay=days.find(d=>d.date>=today)?.date||days[0]?.date;selectedTime='';}
     lastDay=kstDay();
   }
   function renderWeekly() {
@@ -171,20 +172,27 @@ export function createExtras(state, hooks) {
     const openDetails=[...root.querySelectorAll('details[open]')].map(d=>d.id);
     renderWeeklyStamp();
     if(!weekly){root.innerHTML=`<div class="empty-state" aria-live="polite">${loading?'<span class="loading-orbit"></span><p>날씨를 확인하고 있어요</p>':'<p>날씨를 불러오지 못했어요</p><button id="retryWeekly">다시 시도</button>'}</div>`;$('#retryWeekly')?.addEventListener('click',()=>loadWeekly(true));return;}
-    intervals=runningIntervals(weekly.hourly);const days=weekly.daily.slice(0,7);chooseInitial(days);
+    intervals=runningIntervals(weekly.hourly);
+    const today=kstDay(), yesterday=kstDay(new Date(Date.parse(`${today}T00:00:00+09:00`)-86400000));
+    const pastDay=[...(weekly.pastDaily||[]),...weekly.daily].find(day=>day.date===yesterday)||{date:yesterday};
+    const days=[pastDay,...weekly.daily.filter(day=>day.date>=today).slice(0,7)];chooseInitial(days);
+    const historical=selectedDay<today;
     const hours=intervals.filter(h=>h.time.startsWith(selectedDay));
-    if(!hours.some(h=>h.time===selectedTime))selectedTime=daySelections.get(selectedDay)||hours.find(h=>+h.time.slice(11,13)===preferredHour)?.time||hours[0]?.time;
+    if(!hours.some(h=>h.time===selectedTime))selectedTime=hours.find(h=>+h.time.slice(11,13)===preferredHour)?.time||hours[0]?.time;
     if(!hours.some(h=>h.time===selectedTime))selectedTime=hours[0]?.time;
     const solarDay=days.find(day=>day.date===selectedDay), sunrise=solarClock(solarDay?.sunrise,selectedDay), sunset=solarClock(solarDay?.sunset,selectedDay);
-    const cells=(fn)=>hours.map(h=>`<td class="${h.time===selectedTime?'selected-hour':''} ${Date.parse(h.time)<Date.now()?'past-hour':''}">${fn(h)}</td>`).join('');
+    const cells=(fn)=>hours.map(h=>`<td class="${h.time===selectedTime?'selected-hour':''} ${!historical&&Date.parse(h.time)<Date.now()?'past-hour':''}">${fn(h)}</td>`).join('');
     const row=(label,fn)=>`<tr><th scope="row">${label}</th>${cells(fn)}</tr>`;
     const windRows=showWind?row('체감 °C',h=>temperatureWithUnit(h.feelsLike))+row('풍속 m/s',h=>value(h.windSpeed,'',1))+row('돌풍 m/s',h=>value(h.gusts,'',1)):'';
-    root.innerHTML=`<div class="weekly-temp-guide" aria-label="기온 단위">최저 / 최고 °C</div><div class="day-rail" role="group" aria-label="7일 날짜 선택, 숫자는 최저/최고 기온 °C">${days.map(d=>{const[weatherIcon,label]=weather(d.code);const name=d.date===kstDay()?'오늘':new Intl.DateTimeFormat('ko-KR',{weekday:'short',timeZone:'Asia/Seoul'}).format(new Date(d.date+'T12:00:00+09:00'));return `<button class="day-chip ${selectedDay===d.date?'active':''}" data-day="${d.date}" aria-pressed="${selectedDay===d.date}" aria-label="${d.date} ${name}, ${label}, 최저 ${temperatureWithUnit(d.low)} 최고 ${temperatureWithUnit(d.high)}"><b>${name}</b><small>${+d.date.slice(5,7)}/${+d.date.slice(8)}</small><span aria-hidden="true">${weatherIcon}</span><div>${temperature(d.low)}/${temperature(d.high)}</div></button>`;}).join('')}</div>
+    root.innerHTML=`<div class="weekly-temp-guide" aria-label="기온 단위">최저 / 최고 °C</div><div class="day-rail" role="group" aria-label="어제와 오늘부터 7일 날짜 선택, 숫자는 최저/최고 기온 °C">${days.map(d=>{const[weatherIcon,label]=weather(d.code);const name=d.date===today?'오늘':d.date===yesterday?'어제':new Intl.DateTimeFormat('ko-KR',{weekday:'short',timeZone:'Asia/Seoul'}).format(new Date(d.date+'T12:00:00+09:00'));return `<button class="day-chip ${selectedDay===d.date?'active':''}" data-day="${d.date}" aria-pressed="${selectedDay===d.date}" aria-label="${d.date} ${name}, ${label}, 최저 ${temperatureWithUnit(d.low)} 최고 ${temperatureWithUnit(d.high)}"><b>${name}</b><small>${+d.date.slice(5,7)}/${+d.date.slice(8)}</small><span aria-hidden="true">${weatherIcon}</span><div>${temperature(d.low)}/${temperature(d.high)}</div></button>`;}).join('')}</div>
       <div class="sun-times" role="group" aria-label="${selectedDay} 일출과 일몰"><span aria-label="일출 ${sunrise==='—'?'자료 없음':sunrise}">일출 <b>${sunrise}</b></span><span aria-label="일몰 ${sunset==='—'?'자료 없음':sunset}">일몰 <b>${sunset}</b></span></div>
-      <section class="hourly-section"><div id="hourlyScroll" class="hourly-scroll" tabindex="0" role="region" aria-label="출발 시각 선택, 시간별 예보, 가로로 스크롤"><table class="hourly-table"><caption class="sr-only">${selectedDay}. 출발 시각을 선택하세요. 강수는 이후 1시간. 기온과 체감 °C, 강수확률 %, 강수량 mm, 풍속과 돌풍 m/s.</caption><thead><tr><th scope="col">출발</th>${hours.map(h=>`<th scope="col" class="${h.time===selectedTime?'selected-hour':''} ${Date.parse(h.time)<Date.now()?'past-hour':''}"><button data-hour="${h.time}" aria-pressed="${h.time===selectedTime}">${+h.time.slice(11,13)}시</button></th>`).join('')}</tr></thead><tbody>${row('기온 °C',h=>`<b>${temperatureWithUnit(h.temperature)}</b>`)}${row('강수확률',h=>value(h.probability,'%'))}${row('강수량 mm',h=>amount(h.precipitation))}${windRows}</tbody></table></div>
-      <div class="table-actions"><details id="forecastInfo"><summary id="forecastInfoSummary" aria-label="예보 시간과 단위 안내">${icon('info')}<span>예보 정보</span>${icon('chevron')}</summary><p>선택한 출발 시각부터 1시간의 강수확률·강수량·돌풍을 보여드려요. 정시 사이의 기온은 해당 시간대 예보를 사용해요. — 자료 없음.</p></details><button id="windToggle" class="text-button" aria-expanded="${showWind}">체감·바람 ${showWind?'접기':'더 보기'} ${icon('chevron')}</button></div></section><section id="wearCard" class="wear-card"></section>`;
-    root.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{daySelections.set(selectedDay,selectedTime);selectedDay=b.dataset.day;selectedTime=daySelections.get(selectedDay)||'';renderWeekly();root.querySelector(`[data-day="${selectedDay}"]`)?.focus({preventScroll:true});});
-    root.querySelectorAll('[data-hour]').forEach(b=>b.onclick=()=>{selectedTime=b.dataset.hour;lastRenderedSelectedTime=selectedTime;preferredHour=+selectedTime.slice(11,13);daySelections.set(selectedDay,selectedTime);const index=hours.findIndex(h=>h.time===selectedTime)+1;root.querySelectorAll('tr').forEach(tr=>[...tr.children].forEach((cell,i)=>cell.classList.toggle('selected-hour',i===index)));root.querySelectorAll('[data-hour]').forEach(btn=>btn.setAttribute('aria-pressed',String(btn===b)));renderWear();});
+      ${historical?`<div class="history-context"><span>어제 ${+selectedDay.slice(5,7)}/${+selectedDay.slice(8)} · 과거 모델 자료</span><button id="returnToday" class="text-button">오늘 같은 시간 보기</button></div>`:''}
+      <section class="hourly-section">${!hours.length?'<p class="past-note">이 날짜의 자료가 없어요</p>':''}<div id="hourlyScroll" class="hourly-scroll" tabindex="0" role="region" aria-label="${historical?'시간 선택, 과거 모델 자료':'출발 시각 선택, 시간별 예보'}, 가로로 스크롤"><table class="hourly-table"><caption class="sr-only">${selectedDay}. ${historical?'과거 모델 자료. 시간을 선택하세요.':'출발 시각을 선택하세요.'} 강수는 이후 1시간. 기온과 체감 °C, ${historical?'':'강수확률 %, '}강수량 mm, 풍속과 돌풍 m/s.</caption><thead><tr><th scope="col">${historical?'시간':'출발'}</th>${hours.map(h=>`<th scope="col" class="${h.time===selectedTime?'selected-hour':''} ${!historical&&Date.parse(h.time)<Date.now()?'past-hour':''}"><button data-hour="${h.time}" aria-pressed="${h.time===selectedTime}">${+h.time.slice(11,13)}시</button></th>`).join('')}</tr></thead><tbody>${row('기온 °C',h=>`<b>${temperatureWithUnit(h.temperature)}</b>`)}${historical?'':row('강수확률',h=>value(h.probability,'%'))}${row('강수량 mm',h=>amount(h.precipitation))}${windRows}</tbody></table></div>
+      <div class="table-actions"><details id="forecastInfo"><summary id="forecastInfoSummary" aria-label="자료 시간과 단위 안내">${icon('info')}<span>${historical?'자료 정보':'예보 정보'}</span>${icon('chevron')}</summary><p>${historical?'관측 기록이 아닌 모델 기반 자료로 실제 날씨와 차이가 있을 수 있어요. 기온·체감은 해당 정시, 강수량·돌풍은 이후 1시간 기준이에요.':'선택한 출발 시각부터 1시간의 강수확률·강수량·돌풍을 보여드려요. 어제와의 비교는 같은 위치·정시의 모델 체감온도 기준이에요.'} — 자료 없음.</p></details><button id="windToggle" class="text-button" aria-expanded="${showWind}">체감·바람 ${showWind?'접기':'더 보기'} ${icon('chevron')}</button></div></section><section id="wearCard" class="wear-card"></section>`;
+    const selectDay=date=>{selectedDay=date;selectedTime='';renderWeekly();root.querySelector(`[data-day="${selectedDay}"]`)?.focus({preventScroll:true});};
+    root.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>selectDay(b.dataset.day));
+    $('#returnToday')?.addEventListener('click',()=>selectDay(today));
+    root.querySelectorAll('[data-hour]').forEach(b=>b.onclick=()=>{selectedTime=b.dataset.hour;lastRenderedSelectedTime=selectedTime;preferredHour=+selectedTime.slice(11,13);const index=hours.findIndex(h=>h.time===selectedTime)+1;root.querySelectorAll('tr').forEach(tr=>[...tr.children].forEach((cell,i)=>cell.classList.toggle('selected-hour',i===index)));root.querySelectorAll('[data-hour]').forEach(btn=>btn.setAttribute('aria-pressed',String(btn===b)));renderWear();});
     $('#windToggle').onclick=()=>{showWind=!showWind;renderWeekly();$('#windToggle').focus({preventScroll:true});};renderWear();
     openDetails.forEach(id=>{if($('#'+id))$('#'+id).open=true;});
     const hourlyNode=$('.hourly-scroll'), selectedHourButton=root.querySelector(`[data-hour="${selectedTime}"]`), selectedIndex=[...root.querySelectorAll('[data-hour]')].findIndex(button=>button.dataset.hour===selectedTime), visible=hourlyNode.clientWidth>0, selectionChanged=lastRenderedSelectedTime!==selectedTime||!visible;
@@ -201,9 +209,12 @@ export function createExtras(state, hooks) {
   }
   function renderWear() {
     const card=$('#wearCard');if(!card)return;const wasOpen=$('#comfortDetails')?.open;
+    card.hidden=selectedDay<kstDay();if(card.hidden){card.innerHTML='';return;}
+    const comparison=yesterdayFeelsLikeComparison(weekly.hourly,selectedTime);
+    const comparisonText=comparison?(comparison.delta===0?`어제 ${comparison.hour}시와 체감이 비슷해요`:`어제 ${comparison.hour}시보다 체감 ${Math.abs(comparison.delta)}° ${comparison.delta<0?'낮아요':'높아요'}`):'';
     const recommendation=recommendRunningWear(intervals,selectedTime,preferences.comfort,true);const model=intervals.find(h=>h.time===selectedTime);
     const past=Date.parse(selectedTime)<Date.now();const time=`${selectedTime?.slice(11,16)||'—'}–${model?.endAt?.slice(11,16)||'—'}${model?.endAt?.slice(0,10)!==selectedTime?.slice(0,10)&&model?.endAt?' (다음 날)':''}`;
-    card.innerHTML=`${past?'<p class="past-note">지난 시간 기준</p>':''}<p class="wear-title">1시간 러닝 옷차림</p><p class="wear-time">${time} · ${recommendation?`체감 ${temperatureWithUnit(recommendation.low)}–${temperatureWithUnit(recommendation.high)}`:'체감 자료 없음'}</p>${recommendation?`<p class="wear-combination">${recommendation.top} · ${recommendation.bottom}</p>${[recommendation.extra,...recommendation.notes].filter(Boolean).filter((n,i,a)=>!n.includes('바람막이')||!a.some((other,j)=>j!==i&&other.includes('바람 강함'))).slice(0,2).map(n=>`<p class="wear-note">${n}</p>`).join('')}`:''}<details id="comfortDetails" class="comfort-details" ${wasOpen?'open':''}><summary id="comfortSummary">내 체감: ${{cold:'추위를 많이 탐',normal:'보통',hot:'더위를 많이 탐'}[preferences.comfort]} ${icon('chevron')}</summary><div class="comfort-options" role="group" aria-label="내 체감">${[['cold','추위를 많이 탐'],['normal','보통'],['hot','더위를 많이 탐']].map(([v,l])=>`<button data-comfort="${v}" aria-pressed="${preferences.comfort===v}">${l}</button>`).join('')}</div><p>가벼운 1시간 러닝 기준이며 바람·습도는 체감온도에 반영돼요. 강풍 안내는 준비물 참고용이고 공식 특보가 아니에요.</p></details>`;
+    card.innerHTML=`${past?'<p class="past-note">지난 시간 기준</p>':''}<p class="wear-title">1시간 러닝 옷차림</p><p class="wear-time">${time} · ${recommendation?`체감 ${temperatureWithUnit(recommendation.low)}–${temperatureWithUnit(recommendation.high)}`:'체감 자료 없음'}</p>${comparisonText?`<p class="wear-comparison">${comparisonText}</p>`:''}${recommendation?`<p class="wear-combination">${recommendation.top} · ${recommendation.bottom}</p>${[recommendation.extra,...recommendation.notes].filter(Boolean).filter((n,i,a)=>!n.includes('바람막이')||!a.some((other,j)=>j!==i&&other.includes('바람 강함'))).slice(0,2).map(n=>`<p class="wear-note">${n}</p>`).join('')}`:''}<details id="comfortDetails" class="comfort-details" ${wasOpen?'open':''}><summary id="comfortSummary">내 체감: ${{cold:'추위를 많이 탐',normal:'보통',hot:'더위를 많이 탐'}[preferences.comfort]} ${icon('chevron')}</summary><div class="comfort-options" role="group" aria-label="내 체감">${[['cold','추위를 많이 탐'],['normal','보통'],['hot','더위를 많이 탐']].map(([v,l])=>`<button data-comfort="${v}" aria-pressed="${preferences.comfort===v}">${l}</button>`).join('')}</div><p>가벼운 1시간 러닝 기준이며 바람·습도는 체감온도에 반영돼요. 강풍 안내는 준비물 참고용이고 공식 특보가 아니에요.</p></details>`;
     card.querySelectorAll('[data-comfort]').forEach(b=>b.onclick=()=>{preferences.comfort=b.dataset.comfort;persist();renderWear();$('#comfortDetails').open=true;card.querySelector(`[data-comfort="${preferences.comfort}"]`).focus({preventScroll:true});});
   }
   function boot() {
