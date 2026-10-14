@@ -191,15 +191,15 @@ test('API rejects invalid custom coordinates instead of silently returning Jamsi
 });
 
 test('weekly API sends selected coordinates, m/s and return-hour coverage to provider',async()=>{
-  resetRawCacheForTest();const nativeFetch=globalThis.fetch;let called;
+  resetRawCacheForTest();const nativeFetch=globalThis.fetch;let called;const today=new Date(Date.now()+9*3600000).toISOString().slice(0,10);
   globalThis.fetch=async(url)=>{
     called=new URL(url);
-    return new Response(JSON.stringify({hourly:{time:['2026-09-12T00:00','2026-09-12T01:00'],temperature_2m:[20,21]},daily:{time:['2026-09-12'],temperature_2m_min:[20],temperature_2m_max:[21],sunrise:['2026-09-12T06:20'],sunset:['2026-09-12T18:35']}}),{status:200,headers:{'Content-Type':'application/json'}});
+    return new Response(JSON.stringify({hourly:{time:[`${today}T00:00`,`${today}T01:00`],temperature_2m:[20,21]},daily:{time:[today],temperature_2m_min:[20],temperature_2m_max:[21],sunrise:[`${today}T06:20`],sunset:[`${today}T18:35`]}}),{status:200,headers:{'Content-Type':'application/json'}});
   };
   try {
     const req={url:'/api/weekly-forecast',method:'POST',headers:{},async *[Symbol.asyncIterator](){yield Buffer.from(JSON.stringify({location:{lat:35.1796,lon:129.0756,name:'부산'}}));}};
     let status,body;const res={writeHead(s){status=s;},end(b){body=JSON.parse(b);}};
-    await requestHandler(req,res);assert.equal(status,200);assert.equal(called.searchParams.get('latitude'),'35.1796');assert.equal(called.searchParams.get('longitude'),'129.0756');assert.equal(called.searchParams.get('wind_speed_unit'),'ms');assert.equal(called.searchParams.get('forecast_days'),'8');assert.ok(called.searchParams.get('daily').includes('sunrise,sunset'));assert.equal(body.location.name,'부산');assert.equal(body.daily[0].sunrise,'2026-09-12T06:20');assert.equal(body.daily[0].sunset,'2026-09-12T18:35');
+    await requestHandler(req,res);assert.equal(status,200);assert.equal(called.searchParams.get('latitude'),'35.1796');assert.equal(called.searchParams.get('longitude'),'129.0756');assert.equal(called.searchParams.get('wind_speed_unit'),'ms');assert.equal(called.searchParams.get('forecast_days'),'8');assert.equal(called.searchParams.get('past_days'),'1');assert.ok(called.searchParams.get('daily').includes('sunrise,sunset'));assert.equal(body.location.name,'부산');assert.equal(body.daily[0].sunrise,`${today}T06:20`);assert.equal(body.daily[0].sunset,`${today}T18:35`);
   } finally {globalThis.fetch=nativeFetch;}
 });
 
