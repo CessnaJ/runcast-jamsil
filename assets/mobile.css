@@ -1228,12 +1228,18 @@ select:focus-visible,
 .install-browser { display: grid; gap: 6px; }
 .install-browser > span { color: var(--muted); font-size: 12px; }
 .install-browser select {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
   min-height: 48px;
-  padding: 10px 12px;
+  padding: 10px 44px 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel-2);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23afc1b7' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 18px 18px;
   color: var(--text);
   font: inherit;
   font-size: 16px;

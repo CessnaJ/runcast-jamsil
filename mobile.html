@@ -49,9 +49,8 @@
       <span class="mobile-brand" role="img" aria-label="RunCast">RC</span>
       <button id="locationBtn" aria-haspopup="dialog"><b id="locationName">석촌호수</b><svg class="ui-icon ui-icon-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
       <button class="icon-btn" id="refreshBtn" aria-label="활성 화면 새로고침" aria-busy="false"><svg class="ui-icon ui-icon-refresh" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4L4 9"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4L20 15"/><path d="M20 20v-5h-5"/></svg></button>
-      <button class="icon-btn" id="installInfoBtn" aria-label="홈 화면에 추가 안내" aria-haspopup="dialog" aria-controls="installSheet"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/></svg></button>
       <button class="icon-btn" id="moreBtn" aria-label="더 보기" aria-expanded="false" aria-controls="moreMenu"><svg class="ui-icon ui-icon-more" aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></svg></button>
-      <div id="moreMenu" class="more-menu" hidden><button id="installMenuBtn">홈 화면에 추가</button><button id="settingsBtn">연결 상태</button><a href="/?view=desktop">데스크톱 보기</a></div>
+      <div id="moreMenu" class="more-menu" hidden><button id="installMenuBtn" aria-haspopup="dialog" aria-controls="installSheet">앱 설치 방법</button><button id="settingsBtn">연결 상태</button><a href="/?view=desktop">데스크톱 보기</a></div>
     </header>
     <main class="mobile-main">
       <section class="mobile-view active" data-view="decision" aria-label="러닝 판단">
