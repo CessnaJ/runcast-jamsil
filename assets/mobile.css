@@ -143,19 +143,20 @@ select:focus-visible,
   color: var(--muted);
 }
 .icon-btn {
+  display: grid;
+  place-items: center;
   flex: 0 0 44px;
   width: 44px;
+  height: 44px;
   min-height: 44px;
+  padding: 0;
   border: 0;
   border-radius: 10px;
   background: none;
   font-size: 26px;
+  line-height: 1;
 }
-#refreshBtn {
-  display: grid;
-  place-items: center;
-  height: 44px;
-}
+.icon-btn .ui-icon { display: block; }
 #refreshBtn .ui-icon,
 #refreshBtn::before {
   grid-area: 1 / 1;
@@ -1206,14 +1207,20 @@ select:focus-visible,
   margin-bottom: 12px;
 }
 .sheet-head button {
+  display: grid;
+  place-items: center;
   flex: 0 0 44px;
   width: 44px;
+  height: 44px;
   min-height: 44px;
+  padding: 0;
   border: 0;
   border-radius: 10px;
   background: var(--panel-2);
   font-size: 26px;
+  line-height: 1;
 }
+.sheet-head button .ui-icon { display: block; }
 .install-sheet { max-width: 100%; overscroll-behavior: contain; }
 .install-sheet .sheet-head { margin-bottom: 4px; }
 .install-sheet h2 { font-size: 19px; }
