@@ -73,6 +73,7 @@ button:focus-visible,
 a:focus-visible,
 summary:focus-visible,
 input:focus-visible,
+select:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--mint);
   outline-offset: 2px;
@@ -142,19 +143,20 @@ input:focus-visible,
   color: var(--muted);
 }
 .icon-btn {
+  display: grid;
+  place-items: center;
   flex: 0 0 44px;
   width: 44px;
+  height: 44px;
   min-height: 44px;
+  padding: 0;
   border: 0;
   border-radius: 10px;
   background: none;
   font-size: 26px;
+  line-height: 1;
 }
-#refreshBtn {
-  display: grid;
-  place-items: center;
-  height: 44px;
-}
+.icon-btn .ui-icon { display: block; }
 #refreshBtn .ui-icon,
 #refreshBtn::before {
   grid-area: 1 / 1;
@@ -1205,14 +1207,99 @@ input:focus-visible,
   margin-bottom: 12px;
 }
 .sheet-head button {
+  display: grid;
+  place-items: center;
   flex: 0 0 44px;
   width: 44px;
+  height: 44px;
   min-height: 44px;
+  padding: 0;
   border: 0;
   border-radius: 10px;
   background: var(--panel-2);
   font-size: 26px;
+  line-height: 1;
 }
+.sheet-head button .ui-icon { display: block; }
+.install-sheet { max-width: 100%; overscroll-behavior: contain; }
+.install-sheet .sheet-head { margin-bottom: 4px; }
+.install-sheet h2 { font-size: 19px; }
+.install-sheet .source-note { margin: 0 0 20px; }
+.install-browser { display: grid; gap: 6px; }
+.install-browser > span { color: var(--muted); font-size: 12px; }
+.install-browser select {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 44px 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23afc1b7' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 18px 18px;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+.install-steps {
+  list-style: none;
+  counter-reset: install-step;
+  display: grid;
+  gap: 18px;
+  margin: 24px 0;
+  padding: 0;
+}
+.install-steps li {
+  position: relative;
+  counter-increment: install-step;
+  padding-left: 38px;
+  min-height: 28px;
+  line-height: 1.65;
+}
+.install-steps li::before {
+  content: counter(install-step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--mint);
+  font-size: 13px;
+  font-weight: 600;
+}
+.install-steps small { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; }
+.install-finish, .install-empty { color: var(--muted); font-size: 14px; }
+.install-empty { margin-top: 20px; }
+.install-help { margin-top: 16px; border-top: 1px solid var(--line); }
+.install-help summary { min-height: 44px; padding: 12px 0; font-size: 13px; cursor: pointer; }
+.install-help p { padding-bottom: 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.install-notice { margin-bottom: 20px; color: var(--text); line-height: 1.7; }
+.install-copy { display: grid; gap: 10px; margin-top: 16px; }
+.install-copy input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 16px;
+}
+.install-copy button {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.install-copy [role="status"] { color: var(--muted); font-size: 13px; }
+.install-copy [role="status"]:empty { display: none; }
 .detail-card {
   border-top: 1px solid var(--line);
   margin-top: 12px;
