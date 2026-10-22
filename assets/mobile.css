@@ -73,6 +73,7 @@ button:focus-visible,
 a:focus-visible,
 summary:focus-visible,
 input:focus-visible,
+select:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--mint);
   outline-offset: 2px;
@@ -1213,6 +1214,79 @@ input:focus-visible,
   background: var(--panel-2);
   font-size: 26px;
 }
+.install-sheet { max-width: 100%; overscroll-behavior: contain; }
+.install-sheet .sheet-head { margin-bottom: 4px; }
+.install-sheet h2 { font-size: 19px; }
+.install-sheet .source-note { margin: 0 0 20px; }
+.install-browser { display: grid; gap: 6px; }
+.install-browser > span { color: var(--muted); font-size: 12px; }
+.install-browser select {
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+.install-steps {
+  list-style: none;
+  counter-reset: install-step;
+  display: grid;
+  gap: 18px;
+  margin: 24px 0;
+  padding: 0;
+}
+.install-steps li {
+  position: relative;
+  counter-increment: install-step;
+  padding-left: 38px;
+  min-height: 28px;
+  line-height: 1.65;
+}
+.install-steps li::before {
+  content: counter(install-step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--mint);
+  font-size: 13px;
+  font-weight: 600;
+}
+.install-steps small { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; }
+.install-finish, .install-empty { color: var(--muted); font-size: 14px; }
+.install-empty { margin-top: 20px; }
+.install-help { margin-top: 16px; border-top: 1px solid var(--line); }
+.install-help summary { min-height: 44px; padding: 12px 0; font-size: 13px; cursor: pointer; }
+.install-help p { padding-bottom: 8px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.install-notice { margin-bottom: 20px; color: var(--text); line-height: 1.7; }
+.install-copy { display: grid; gap: 10px; margin-top: 16px; }
+.install-copy input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 16px;
+}
+.install-copy button {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.install-copy [role="status"] { color: var(--muted); font-size: 13px; }
+.install-copy [role="status"]:empty { display: none; }
 .detail-card {
   border-top: 1px solid var(--line);
   margin-top: 12px;

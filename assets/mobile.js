@@ -3,6 +3,7 @@ import { ROUTES, locationKey, hourlyTemperatureAt, roundTemperature, evaluateRun
 import { createExtras, storage, preferences, readForecastCache, writeForecastCache } from './mobile-extra.js';
 import { createRefreshScheduler, REFRESH_INTERVALS, REFRESH_TIMEOUTS } from './refresh-scheduler.mjs';
 import { icon } from './ui-icons.mjs';
+import { createInstallGuide } from './install-guide.mjs';
 
 
 // 이전 버전이 브라우저에 저장했던 비밀 키를 더 이상 사용하지 않고 제거합니다.
@@ -950,6 +951,7 @@ window.addEventListener('popstate',()=>{
 });
 function openSettings(){void openSheet($('#settingsSheet'));}
 function closeSettings(){$('#settingsSheet').close();}
+const openInstallGuide = createInstallGuide({ openSheet });
 
 function renderConnectionStatus() {
   const rows = [
@@ -973,6 +975,8 @@ async function boot() {
   $("#analyzeBtn").onclick = analyzeCctv; $("#settingsBtn").onclick = openSettings; $("#closeSettings").onclick = closeSettings;
   $('#moreBtn').onclick=()=>{const hidden=!$('#moreMenu').hidden;$('#moreMenu').hidden=hidden;$('#moreBtn').setAttribute('aria-expanded',String(!hidden));};
   $('#settingsBtn').onclick=()=>{$('#moreMenu').hidden=true;$('#moreBtn').setAttribute('aria-expanded','false');openSettings();};
+  $('#installInfoBtn').onclick=openInstallGuide;
+  $('#installMenuBtn').onclick=()=>{$('#moreMenu').hidden=true;$('#moreBtn').setAttribute('aria-expanded','false');$('#moreBtn').focus();void openInstallGuide();};
   $('#jumpCctv').onclick=scrollToCctv;
   $('#openCctv').onclick=scrollToCctv;
   $$('[data-close-sheet]').forEach(button=>button.onclick=()=>button.closest('dialog').close());

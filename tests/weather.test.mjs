@@ -28,6 +28,14 @@ test('key files cannot be served and config exposes only the public map identifi
   }
 });
 
+test('installation guide module is served as JavaScript by the local server',async()=>{
+  let status,headers,body;
+  await requestHandler({url:'/assets/install-guide.mjs',method:'GET',headers:{}},{writeHead(s,h){status=s;headers=h;},end(b){body=String(b);}});
+  assert.equal(status,200);
+  assert.match(headers['Content-Type'],/text\/javascript/);
+  assert.match(body,/export function createInstallGuide/);
+});
+
 test('location validates Korean support areas and preserves legacy presets',()=>{
   assert.deepEqual(resolveLocation({route:'olympic'}),ROUTES.olympic);
   for(const p of [{lat:37.55,lon:126.99},{lat:35.1796,lon:129.0756},{lat:33.4996,lon:126.5312},{lat:37.48,lon:130.9},{lat:37.24,lon:131.87}])assert.ok(isSupportedLocation(p.lat,p.lon));
