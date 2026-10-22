@@ -3,7 +3,7 @@ import { ROUTES, locationKey, hourlyTemperatureAt, roundTemperature, evaluateRun
 import { createExtras, storage, preferences, readForecastCache, writeForecastCache } from './mobile-extra.js';
 import { createRefreshScheduler, REFRESH_INTERVALS, REFRESH_TIMEOUTS } from './refresh-scheduler.mjs';
 import { icon } from './ui-icons.mjs';
-import { createInstallGuide } from './install-guide.mjs';
+import { createInstallGuide, createInstallController } from './install-guide.mjs';
 
 
 // 이전 버전이 브라우저에 저장했던 비밀 키를 더 이상 사용하지 않고 제거합니다.
@@ -952,6 +952,21 @@ window.addEventListener('popstate',()=>{
 function openSettings(){void openSheet($('#settingsSheet'));}
 function closeSettings(){$('#settingsSheet').close();}
 const openInstallGuide = createInstallGuide({ openSheet });
+const standaloneDisplay = window.matchMedia('(display-mode: standalone)');
+const installController = createInstallController({
+  eventTarget: window,
+  isStandalone: () => standaloneDisplay.matches || navigator.standalone === true,
+  onChange: ({ visible, canPrompt, busy }) => {
+    const button = $('#installMenuBtn');
+    button.hidden = !visible;
+    button.disabled = busy;
+    button.textContent = busy ? '설치 확인 중…' : canPrompt ? '앱 설치' : '앱 설치 방법';
+    button.setAttribute('aria-busy', String(busy));
+    if (canPrompt || busy) button.removeAttribute('aria-controls');
+    else button.setAttribute('aria-controls', 'installSheet');
+  },
+});
+standaloneDisplay.addEventListener?.('change', () => installController.refresh());
 
 function renderConnectionStatus() {
   const rows = [
@@ -983,7 +998,13 @@ async function boot() {
     if(!moreMenu.hidden&&!moreMenu.contains(event.target)&&!moreButton.contains(event.target))setMoreMenuOpen(false);
   });
   $('#settingsBtn').onclick=()=>{setMoreMenuOpen(false);moreButton.focus();openSettings();};
-  $('#installMenuBtn').onclick=()=>{setMoreMenuOpen(false);moreButton.focus();void openInstallGuide();};
+  $('#installMenuBtn').onclick=()=>{
+    setMoreMenuOpen(false);moreButton.focus();
+    const {visible,canPrompt,busy}=installController.getState();
+    if(!visible||busy)return;
+    if(!canPrompt){void openInstallGuide();return;}
+    void installController.prompt().then(result=>{if(result.status==='failed')void openInstallGuide();});
+  };
   $('#jumpCctv').onclick=scrollToCctv;
   $('#openCctv').onclick=scrollToCctv;
   $$('[data-close-sheet]').forEach(button=>button.onclick=()=>button.closest('dialog').close());

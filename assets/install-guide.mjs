@@ -1,4 +1,48 @@
-// This only selects help text; installation remains in the browser's own UI.
+// Use the browser's install event when available; keep instructions as a fallback.
+export function createInstallController({ eventTarget, isStandalone, onChange }) {
+  let deferredPrompt = null, busy = false, installed = false;
+  const getState = () => {
+    const visible = !installed && !isStandalone();
+    return { visible, canPrompt: visible && !!deferredPrompt && !busy, busy };
+  };
+  const refresh = () => onChange(getState());
+  eventTarget.addEventListener('beforeinstallprompt', event => {
+    if (!getState().visible || typeof event.prompt !== 'function') return;
+    event.preventDefault();
+    deferredPrompt = event;
+    refresh();
+  });
+  eventTarget.addEventListener('appinstalled', () => {
+    installed = true;
+    deferredPrompt = null;
+    refresh();
+  });
+  eventTarget.addEventListener('pageshow', refresh);
+  refresh();
+  return {
+    getState, refresh,
+    async prompt() {
+      if (busy) return { status: 'busy' };
+      if (!getState().canPrompt) return { status: 'unavailable' };
+      const event = deferredPrompt;
+      deferredPrompt = null; // Each browser event can only be used once.
+      busy = true;
+      refresh();
+      try {
+        // Call before the first await so the menu click retains user activation.
+        const result = await event.prompt();
+        const choice = event.userChoice ? await event.userChoice : result;
+        return { status: choice?.outcome === 'accepted' ? 'accepted' : 'dismissed' };
+      } catch {
+        return { status: 'failed' };
+      } finally {
+        busy = false;
+        refresh();
+      }
+    },
+  };
+}
+
 export function detectInstallEnvironment({ userAgent = '', platform = '', maxTouchPoints = 0, standalone = false } = {}) {
   const ios = /iPhone|iPad|iPod/i.test(userAgent) || (platform === 'MacIntel' && maxTouchPoints > 1);
   const inApp = /KAKAOTALK|Instagram|FBAN|FBAV|NAVER\(|Line\/|; wv\)/i.test(userAgent);
