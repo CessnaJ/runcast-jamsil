@@ -292,10 +292,6 @@ function cctvStatus(camera) {
   return ["", "아직 확인 안 함"];
 }
 
-function renderSeokchonLive() {
-  $('#seokchonLive').hidden = state.location.id !== 'seokchon';
-}
-
 function renderCctv() {
   const focusedCctvId=document.activeElement?.closest?.(".cctv-card")?.dataset.cctvId || null;
   const context=currentContext(), cameras=currentCctvs().slice().sort((a,b)=>(a.distance??Infinity)-(b.distance??Infinity)||String(a.id).localeCompare(String(b.id)));
@@ -392,7 +388,7 @@ function render() {
   $('#decisionStamp').textContent=usable?`자료 갱신 · ${rainStamp} · ${thermalStamp}`:'';
   $('#mapStamp').textContent=date?`자료 갱신 · 기상청 수치예보 ${extras.stamp(date)}`:'';
   if(data){renderDepartureModes();renderDecision();renderTimeline();renderEvidence();renderMapSummary();}
-  renderSeokchonLive();renderCctv();renderAviation();if(state.naverMap)drawMapOverlays();
+  renderCctv();renderAviation();if(state.naverMap)drawMapOverlays();
 }
 
 function scheduleContextRetry(key, meta) {
