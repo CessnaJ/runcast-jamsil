@@ -1,4 +1,5 @@
 import { loadCctv } from './cctv-client.mjs';
+import { bindCctvViewer } from './cctv-viewer.mjs';
 import { ROUTES, locationKey, hourlyTemperatureAt, roundTemperature, evaluateRunWindow, runSampleMetrics } from './weather-domain.mjs';
 import { createExtras, storage, preferences, readForecastCache, writeForecastCache } from './mobile-extra.js';
 import { createRefreshScheduler, REFRESH_INTERVALS, REFRESH_TIMEOUTS } from './refresh-scheduler.mjs';
@@ -323,7 +324,7 @@ function renderCctv() {
     more.hidden=true;
   } else {
     const shown=state.cctvExpanded?cameras:cameras.slice(0,2);
-    rail.innerHTML=shown.map(camera=>`<a class="cctv-card" data-cctv-id="${escapeHtml(camera.id)}" href="${escapeHtml(camera.url)}" target="_blank" rel="noopener noreferrer"><span><b>${icon('camera')} ${escapeHtml(camera.name)}</b><small>${escapeHtml(camera.sector)} 방향 · ${Number.isFinite(camera.distance)?`${camera.distance}km`:"거리 정보 없음"}</small></span><strong>${icon('external')}<span>영상</span></strong></a>`).join("")+(context?.cctv?.stale?'<p class="cctv-cache-note">이전 CCTV 목록을 보여드려요</p>':"");
+    rail.innerHTML=shown.map(camera=>`<a class="cctv-card" data-cctv-id="${escapeHtml(camera.id)}" href="${escapeHtml(camera.url)}" aria-haspopup="dialog"><span><b>${icon('camera')} ${escapeHtml(camera.name)}</b><small>${escapeHtml(camera.sector)} 방향 · ${Number.isFinite(camera.distance)?`${camera.distance}km`:"거리 정보 없음"}</small></span><strong>${icon('camera')}<span>영상</span></strong></a>`).join("")+(context?.cctv?.stale?'<p class="cctv-cache-note">이전 CCTV 목록을 보여드려요</p>':"");
     const remaining=Math.max(0,cameras.length-2);
     more.hidden=!remaining;
     more.innerHTML=state.cctvExpanded?`접기 ${icon('chevron')}`:`나머지 ${remaining}곳 보기 ${icon('chevron')}`;
@@ -979,6 +980,7 @@ function renderConnectionStatus() {
 }
 
 async function boot() {
+  bindCctvViewer($('#cctvRail'), currentCctvs, {openDialog:openSheet});
   $$(".bottom-nav button").forEach((button) => button.onclick = () => switchView(button.dataset.tab));
   $$('[data-open-view]').forEach((button) => button.onclick = () => switchView(button.dataset.openView));
   extras.boot();
