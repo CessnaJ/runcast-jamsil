@@ -1,0 +1,112 @@
+dialog.cctv-viewer {
+  position: fixed;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  border: 0;
+  border-radius: 0;
+  overflow: hidden;
+  background: #07100e;
+  color: #edf4ef;
+  color-scheme: dark;
+  font: 400 15px/1.5 "Noto Sans KR", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+.cctv-viewer[open] {
+  display: flex;
+  flex-direction: column;
+}
+.cctv-viewer::backdrop {
+  background: #07100e;
+}
+.cctv-viewer [hidden] {
+  display: none !important;
+}
+.cctv-viewer-head,
+.cctv-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 8px 12px 8px 16px;
+}
+.cctv-viewer-head {
+  border-bottom: 1px solid #33473c;
+}
+.cctv-viewer-head h2 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.cctv-viewer button,
+.cctv-viewer a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #edf4ef;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.cctv-viewer button:focus-visible,
+.cctv-viewer a:focus-visible {
+  outline: 2px solid #b6f542;
+  outline-offset: 2px;
+}
+.cctv-viewer-close {
+  width: 44px;
+  flex: 0 0 44px;
+}
+.cctv-viewer-stage {
+  position: relative;
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  background: #07100e;
+}
+.cctv-viewer-frame {
+  position: absolute;
+  inset: 0;
+}
+.cctv-viewer-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.cctv-viewer-status {
+  align-self: center;
+  margin: 0;
+  padding: 20px;
+  text-align: center;
+  color: #afc1b7;
+}
+.cctv-viewer-actions {
+  min-height: 44px;
+  flex-wrap: wrap;
+  border-top: 1px solid #33473c;
+  color: #afc1b7;
+  font-size: 13px;
+}
+.cctv-viewer-actions > span {
+  margin-right: auto;
+}
+.cctv-viewer-original .ui-icon {
+  width: 16px;
+  height: 16px;
+}

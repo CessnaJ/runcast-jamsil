@@ -738,6 +738,7 @@ select:focus-visible,
   max-width: 100%;
 }
 .hourly-table {
+  -webkit-tap-highlight-color: transparent;
   border-collapse: separate;
   border-spacing: 0;
   width: max-content;
