@@ -254,7 +254,6 @@
       .cctv-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
     }
   </style>
-  <link rel="stylesheet" href="/assets/cctv-viewer.css" />
 </head>
 <body>
   <div class="app">
@@ -370,7 +369,6 @@
 
   <script type="module">
     import {loadCctv} from './assets/cctv-client.mjs';
-    import {bindCctvViewer} from './assets/cctv-viewer.mjs';
     const ROUTES = {
       seokchon: { name: '석촌호수', lat: 37.5082, lon: 127.1001 },
       olympic: { name: '올림픽공원', lat: 37.5207, lon: 127.1215 },
@@ -500,9 +498,9 @@
       const shownCameras = cameras.slice(0, 8);
       $('#cctvGrid').innerHTML = cameras.length ? shownCameras.map((camera) => {
         const [klass, copy] = cctvStatus(camera);
-        return `<a class="cctv-card" data-cctv-id="${escapeHtml(camera.id)}" href="${escapeHtml(camera.url || '#')}" aria-haspopup="dialog" title="${escapeHtml(camera.name)} 영상 보기" aria-label="${escapeHtml(camera.name)} CCTV 전체화면으로 보기">
+        return `<a class="cctv-card" href="${escapeHtml(camera.url || '#')}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(camera.name)} 영상 직접 보기" aria-label="${escapeHtml(camera.name)} CCTV 영상 새 창에서 열기">
           <span class="cctv-state ${klass}"></span><span class="sector">${escapeHtml(camera.sector)} · ${camera.distance ? camera.distance + 'KM' : copy}</span>
-          <strong>${escapeHtml(camera.name)}</strong><p>${escapeHtml(camera.evidence || copy)}</p><span class="cctv-open">영상 크게 보기</span>
+          <strong>${escapeHtml(camera.name)}</strong><p>${escapeHtml(camera.evidence || copy)}</p><span class="cctv-open">영상 직접 보기 ↗</span>
         </a>`;
       }).join('') : `<div class="cctv-empty">${state.data?.cctv?.pending?'CCTV 목록을 갱신하고 있어요.':state.data?.errors?.some(error=>error.startsWith('CCTV:'))?'CCTV를 불러오지 못했어요. 다시 확인해 주세요.':state.data?.cctv?.configured?'이 위치 주변에서 제공되는 CCTV가 없어요.':'CCTV 연결이 설정되지 않았어요.'}</div>`;
       const realStill = cameras.some((camera) => camera.url && (camera.cctvType === '3' || String(camera.format).toLowerCase().includes('jpg')));
@@ -790,7 +788,6 @@
     }
 
     async function boot() {
-      bindCctvViewer($('#cctvGrid'),()=>state.data?.cctvs||[]);
       tickClock(); setInterval(tickClock,1000); window.addEventListener('resize',drawMap);
       $('#settingsBtn').onclick=openSettings; $('#closeSettings').onclick=closeSettings; $('#settingsModal').onclick=(e)=>{if(e.target.id==='settingsModal')closeSettings();};
       $('#refreshBtn').onclick=refreshData; $('#analyzeBtn').onclick=analyze; $('#radarBtn').onclick=toggleRadar; $('#radarPlay').onclick=toggleRadarPlayback;
