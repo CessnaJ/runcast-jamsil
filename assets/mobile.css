@@ -784,6 +784,9 @@ select:focus-visible,
 .hourly-table .selected-hour {
   background: #b6f54219;
 }
+.hourly-table [data-hour-column] {
+  cursor: pointer;
+}
 .hourly-table button[aria-pressed="true"] {
   color: var(--mint);
   font-weight: 800;
