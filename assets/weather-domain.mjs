@@ -74,11 +74,16 @@ export function normalizeWeekly(payload, location, fetchedAt) {
   return { location, hourly, daily, pastDaily, baseDate, schemaVersion:2, fetchedAt, expiresAt:new Date(Date.parse(fetchedAt)+30*60000).toISOString(), source:'Open-Meteo', timezone:'Asia/Seoul', units:{temperature:'°C', windSpeed:'m/s', precipitation:'mm'}, precipitationPeriod:'직전 1시간 누적' };
 }
 
-export function yesterdayFeelsLikeComparison(hourly, selectedTime, now = new Date()) {
-  if(typeof selectedTime!=='string' || selectedTime.slice(0,10)!==kstDay(now))return null;
-  const at=Date.parse(selectedTime), current=hourly.find(h=>Date.parse(h.time)===at), previous=hourly.find(h=>Date.parse(h.time)===at-86400000);
-  if(!Number.isFinite(current?.feelsLike)||!Number.isFinite(previous?.feelsLike))return null;
-  return {hour:Number(selectedTime.slice(11,13)),delta:roundTemperature(current.feelsLike)-roundTemperature(previous.feelsLike)};
+export function feelsLikeComparison(hourly, selectedTime, now = new Date()) {
+  const at=typeof selectedTime==='string'?Date.parse(selectedTime):NaN;
+  if(!Array.isArray(hourly)||!Number.isFinite(at))return null;
+  const today=kstDay(now), selectedDay=kstDay(new Date(at));
+  if(selectedDay<today)return null;
+  const hour=new Date(at+9*3600000).getUTCHours(), isToday=selectedDay===today;
+  const referenceAt=isToday?at-86400000:Date.parse(`${today}T${String(hour).padStart(2,'0')}:00:00+09:00`);
+  const current=hourly.find(h=>Date.parse(h.time)===at), reference=hourly.find(h=>Date.parse(h.time)===referenceAt);
+  if(!Number.isFinite(current?.feelsLike)||!Number.isFinite(reference?.feelsLike))return null;
+  return {hour,delta:roundTemperature(current.feelsLike)-roundTemperature(reference.feelsLike),referenceLabel:isToday?'어제':'오늘'};
 }
 export const WEAR_BANDS = [
   { below:0, top:'보온 긴팔 + 방풍 재킷', bottom:'보온 타이츠', extra:'장갑 · 귀를 덮는 모자' },
