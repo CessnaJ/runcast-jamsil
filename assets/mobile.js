@@ -4,6 +4,7 @@ import { createExtras, storage, preferences, readForecastCache, writeForecastCac
 import { createRefreshScheduler, REFRESH_INTERVALS, REFRESH_TIMEOUTS } from './refresh-scheduler.mjs';
 import { icon } from './ui-icons.mjs';
 import { createInstallGuide, createInstallController } from './install-guide.mjs';
+import { createVisitTracker } from './visit-tracker.mjs';
 
 
 // 이전 버전이 브라우저에 저장했던 비밀 키를 더 이상 사용하지 않고 제거합니다.
@@ -21,6 +22,7 @@ const state = {
   usingCachedData: false, thermal: { locationKey: locationKey(preferences.location), status: "idle", data: null, error: null }, context: { locationKey: locationKey(preferences.location), status: "idle", cctvs: null, cctv: null, aviation: null, errors: [] }, cctvExpanded: false,
 };
 const refreshScheduler = createRefreshScheduler();
+const visitTracker = createVisitTracker();
 window.runCastMobileDebug = () => ({ hasNaverKey: Boolean(state.keys.naverKey), runtimeMode: state.runtime.mode, hasMap: Boolean(state.naverMap), view: state.view });
 
 const $ = (selector) => document.querySelector(selector);
@@ -951,6 +953,41 @@ window.addEventListener('popstate',()=>{
 });
 function openSettings(){void openSheet($('#settingsSheet'));}
 function closeSettings(){$('#settingsSheet').close();}
+let statsRequest = null;
+function loadStats() {
+  if (statsRequest) return statsRequest;
+  const button = $('#refreshStats'), status = $('#statsStatus'), content = $('#statsContent');
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  status.hidden = false;
+  status.textContent = '통계를 불러오고 있어요.';
+  content.hidden = true;
+  statsRequest = visitTracker.readStats().then(stats => {
+    const values = {
+      statsTotal: stats.total, statsAll: stats.total,
+      statsIos: stats.byOs.ios, statsAndroid: stats.byOs.android,
+      statsWeb: stats.byMode.web, statsPwa: stats.byMode.pwa,
+      statsIosWeb: stats.breakdown.ios.web, statsIosPwa: stats.breakdown.ios.pwa,
+      statsAndroidWeb: stats.breakdown.android.web, statsAndroidPwa: stats.breakdown.android.pwa,
+    };
+    for (const [id, value] of Object.entries(values)) $(`#${id}`).textContent = value.toLocaleString('ko-KR');
+    $('#statsDate').textContent = `${stats.date.replaceAll('-', '. ')} · 한국 시간`;
+    $('#statsUpdated').textContent = `집계 시작 ${formatTime(new Date(stats.startedAt))} · 확인 ${formatTime(new Date(stats.asOf))}`;
+    status.hidden = true;
+    content.hidden = false;
+  }).catch(() => {
+    status.textContent = navigator.onLine === false ? '오프라인에서는 통계를 확인할 수 없어요. 연결 후 다시 눌러 주세요.' : '통계를 불러오지 못했어요. 잠시 후 다시 눌러 주세요.';
+  }).finally(() => {
+    button.disabled = false;
+    button.setAttribute('aria-busy', 'false');
+    statsRequest = null;
+  });
+  return statsRequest;
+}
+async function openStats() {
+  await openSheet($('#statsSheet'));
+  void loadStats();
+}
 const openInstallGuide = createInstallGuide({ openSheet });
 const standaloneDisplay = window.matchMedia('(display-mode: standalone)');
 const installController = createInstallController({
@@ -979,6 +1016,7 @@ function renderConnectionStatus() {
 }
 
 async function boot() {
+  void visitTracker.track();
   $$(".bottom-nav button").forEach((button) => button.onclick = () => switchView(button.dataset.tab));
   $$('[data-open-view]').forEach((button) => button.onclick = () => switchView(button.dataset.openView));
   extras.boot();
@@ -998,6 +1036,8 @@ async function boot() {
     if(!moreMenu.hidden&&!moreMenu.contains(event.target)&&!moreButton.contains(event.target))setMoreMenuOpen(false);
   });
   $('#settingsBtn').onclick=()=>{setMoreMenuOpen(false);moreButton.focus();openSettings();};
+  $('#statsBtn').onclick=()=>{setMoreMenuOpen(false);moreButton.focus();void openStats();};
+  $('#refreshStats').onclick=()=>{void loadStats();};
   $('#installMenuBtn').onclick=()=>{
     setMoreMenuOpen(false);moreButton.focus();
     const {visible,canPrompt,busy}=installController.getState();
@@ -1024,7 +1064,7 @@ async function boot() {
     state.codex = await fetch("/api/status").then((response) => response.json());
     if (state.codex.runtimeMode) state.runtime = { ...state.runtime, mode: state.codex.runtimeMode, aiEnabled: state.codex.aiEnabled };
   } catch { state.codex = { codex: false }; }
-  const refreshVisible = () => {
+  const refreshVisible = (event) => {
     refreshScheduler.cleanupExpired();
     if (!pageCanRefresh()) {
       syncRadarTimer();
@@ -1032,6 +1072,7 @@ async function boot() {
       clearInterval(state.lifecycleTimer);state.lifecycleTimer=null;
       return;
     }
+    void visitTracker.track({ force: ['pageshow', 'visibilitychange', 'online'].includes(event?.type) });
     clearInterval(state.lifecycleTimer);state.lifecycleTimer=setInterval(refreshVisible,60000);
     syncRadarTimer();
     if (state.view === 'weekly') void extras.loadWeekly();

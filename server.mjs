@@ -1,4 +1,5 @@
 import { createCctvBroker } from './lib/cctv-broker.mjs';
+import { createVisitStats } from './lib/visit-stats.mjs';
 import { validCctvUrl } from './assets/cctv-domain.mjs';
 export { parseItsCctvResponse } from './assets/cctv-domain.mjs';
 import { ROUTES, resolveLocation, normalizeWeekly, numberOrNull, evaluateRunWindow, runSampleMetrics } from './assets/weather-domain.mjs';
@@ -24,6 +25,7 @@ const radarCache = new Map();
 // Vercel에서는 인스턴스별 best-effort cache이며, DB/Redis를 요구하지 않습니다.
 const rawCache = new Map();
 const inflightCache = new Map();
+const visitStats = createVisitStats();
 const RAW_CACHE_MAX_ENTRIES = 120;
 const RAW_CACHE_FRESH_MS = 5 * 60_000;
 const RAW_CACHE_STALE_MS = 15 * 60_000;
@@ -1270,7 +1272,7 @@ async function getStatus() {
 async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
-    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/install-guide.mjs", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/refresh-scheduler.mjs", "assets/ui-icons.mjs", "assets/cctv-domain.mjs", "assets/cctv-client.mjs", "sw.js",
+    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/install-guide.mjs", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/refresh-scheduler.mjs", "assets/visit-tracker.mjs", "assets/ui-icons.mjs", "assets/cctv-domain.mjs", "assets/cctv-client.mjs", "sw.js",
     "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/apple-touch-icon-v2.png", "assets/pwa-icon-192.png",
     "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png",
     "assets/apple-startup-1320x2868.png", "assets/apple-startup-1206x2622.png",
@@ -1296,6 +1298,11 @@ async function serveFile(pathname, res) {
 export async function requestHandler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+    if (url.pathname === "/api/visit-stats") {
+      if (req.method === "GET") return sendJson(res, 200, visitStats.read());
+      if (req.method === "POST") return sendJson(res, 200, visitStats.record(await readJson(req), req.headers['user-agent']));
+      return sendJson(res, 405, { error: "Method not allowed" });
+    }
     if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, {
       // Naver Maps Client ID는 브라우저 지도 SDK에 필요한 공개 식별자입니다.
       // 나머지 비밀 키는 값 대신 연결 여부만 전달합니다.
