@@ -50,7 +50,7 @@
       <button id="locationBtn" aria-haspopup="dialog"><b id="locationName">석촌호수</b><svg class="ui-icon ui-icon-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
       <button class="icon-btn" id="refreshBtn" aria-label="활성 화면 새로고침" aria-busy="false"><svg class="ui-icon ui-icon-refresh" aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4L4 9"/><path d="M4 4v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4L20 15"/><path d="M20 20v-5h-5"/></svg></button>
       <button class="icon-btn" id="moreBtn" aria-label="더 보기" aria-expanded="false" aria-controls="moreMenu"><svg class="ui-icon ui-icon-more" aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></svg></button>
-      <div id="moreMenu" class="more-menu" hidden><button id="installMenuBtn" aria-haspopup="dialog" aria-controls="installSheet">앱 설치 방법</button><button id="settingsBtn">연결 상태</button><a href="/?view=desktop">데스크톱 보기</a></div>
+      <div id="moreMenu" class="more-menu" hidden><button id="installMenuBtn" aria-haspopup="dialog" aria-controls="installSheet">앱 설치 방법</button><button id="settingsBtn">연결 상태</button><a href="/?view=desktop">데스크톱 보기</a><button id="statsBtn" aria-haspopup="dialog" aria-controls="statsSheet">통계 보기</button></div>
     </header>
     <main class="mobile-main">
       <section class="mobile-view active" data-view="decision" aria-label="러닝 판단">
@@ -147,6 +147,24 @@
     <div class="sheet-head"><h2 id="settingsTitle">연결 상태</h2><button id="closeSettings" aria-label="연결 상태 닫기"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
     <p class="source-note" id="settingsIntro">데이터 연결 상태를 확인하고 있어요.</p><div class="connection-list" id="connectionList" aria-live="polite"></div>
     <p class="source-note">Naver Maps Client ID는 지도용 공개 식별자이며, 기상청 키는 서버에서만 사용하고, ITS 키는 CCTV 조회 시 기기에 전달해요.</p>
+  </dialog>
+  <dialog class="bottom-sheet stats-sheet" id="statsSheet" aria-labelledby="statsTitle" aria-describedby="statsPrivacyText statsNote">
+    <div class="sheet-head"><h2 id="statsTitle">이용 통계</h2><button data-close-sheet aria-label="통계 닫기"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <p class="source-note stats-status" id="statsStatus" role="status">통계를 불러오고 있어요.</p>
+    <div id="statsContent" hidden>
+      <div class="stats-total"><span>오늘 방문한 휴대폰</span><p><strong id="statsTotal">0</strong><span>대</span></p><small id="statsDate"></small></div>
+      <p class="stats-privacy" id="statsPrivacyText">조회수 수집을 위해 무작위 번호만 전송합니다.</p>
+      <table class="stats-table">
+        <caption class="sr-only">휴대폰 종류와 접속 방식별 오늘 방문한 휴대폰 수</caption>
+        <thead><tr><th scope="col">휴대폰</th><th scope="col">브라우저</th><th scope="col">PWA</th><th scope="col">합계</th></tr></thead>
+        <tbody><tr><th scope="row">아이폰</th><td id="statsIosWeb">0</td><td id="statsIosPwa">0</td><td id="statsIos">0</td></tr><tr><th scope="row">안드로이드</th><td id="statsAndroidWeb">0</td><td id="statsAndroidPwa">0</td><td id="statsAndroid">0</td></tr></tbody>
+        <tfoot><tr><th scope="row">전체</th><td id="statsWeb">0</td><td id="statsPwa">0</td><td id="statsAll">0</td></tr></tfoot>
+      </table>
+      <p class="source-note stats-updated" id="statsUpdated"></p>
+    </div>
+    <button class="stats-refresh" id="refreshStats">새로고침</button>
+    <details class="stats-about"><summary>집계 방식 알아보기</summary><p>얼마나 이용하는지 살펴보기 위한 통계예요. 휴대폰에 저장한 무작위 번호와 휴대폰 종류, 브라우저·PWA 구분만 집계에 사용해요. 같은 휴대폰은 하루 한 번만 세고, 하루 집계 기록은 한국 시간 자정에 비워요. 서비스가 다시 시작되면 중간에 기록이 초기화될 수도 있어요.</p></details>
+    <p class="source-note stats-note" id="statsNote">하루 한 번 · 한국 시간 자정 기준 · 실제 이용 규모와 조금 다를 수 있어요.</p>
   </dialog>
   <dialog id="locationDialog" class="location-dialog" aria-labelledby="locationTitle">
     <div class="sheet-head"><h2 id="locationTitle">위치 선택</h2><button id="closeLocation" aria-label="위치 선택 닫기"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
