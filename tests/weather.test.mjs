@@ -36,6 +36,15 @@ test('installation guide module is served as JavaScript by the local server',asy
   assert.match(body,/export function createInstallGuide/);
 });
 
+test('clothing guide serves the selected PNG while generation outputs stay private',async()=>{
+  let status,headers,body;
+  await requestHandler({url:'/assets/running-wear-guide.png',method:'GET',headers:{}},{writeHead(s,h){status=s;headers=h;},end(b){body=b;}});
+  assert.equal(status,200);assert.equal(headers['Content-Type'],'image/png');
+  assert.deepEqual(body,await readFile(new URL('../assets/running-wear-guide.png',import.meta.url)));
+  await requestHandler({url:'/output/imagegen/runcast-wear-guide-2026-11-07-v4.png',method:'GET',headers:{}},{writeHead(s){status=s;},end(){}});
+  assert.equal(status,404);
+});
+
 test('location validates Korean support areas and preserves legacy presets',()=>{
   assert.deepEqual(resolveLocation({route:'olympic'}),ROUTES.olympic);
   for(const p of [{lat:37.55,lon:126.99},{lat:35.1796,lon:129.0756},{lat:33.4996,lon:126.5312},{lat:37.48,lon:130.9},{lat:37.24,lon:131.87}])assert.ok(isSupportedLocation(p.lat,p.lon));
@@ -164,11 +173,11 @@ test('hourly temperature uses exact local-hour buckets and shared negative round
 const hours=[{time:'2026-09-18T23:00:00+09:00',feelsLike:11.9,windSpeed:3,gusts:5,precipitation:0},{time:'2026-09-19T00:00:00+09:00',feelsLike:12.1,windSpeed:9,gusts:13,precipitation:1}];
 test('clothing uses full hour including midnight, has wind note without double subtraction',()=>{
   const normal=recommendRunningWear(hours,hours[0].time);
-  assert.equal(normal.windy,true);assert.match(normal.notes.join(' '),/바람막이/);assert.match(normal.notes.join(' '),/비·눈/);
+  assert.equal(normal.windy,true);assert.match(normal.outer,/방수/);assert.match(normal.notes.join(' '),/비·눈/);
   const calm=recommendRunningWear(hours.map(h=>({...h,windSpeed:0,gusts:0})),hours[0].time);
   assert.equal(normal.top,calm.top);
-  assert.notEqual(normal.top,recommendRunningWear(hours,hours[0].time,'cold').top);
-  assert.equal(normal.top,recommendRunningWear(hours.map(h=>({...h,feelsLike:h.feelsLike+0.1})),hours[0].time).top);
+  assert.notEqual(normal.bottom,recommendRunningWear(hours,hours[0].time,'hot').bottom);
+  assert.notEqual(normal.bottom,recommendRunningWear(hours.map(h=>({...h,feelsLike:h.feelsLike+0.1})),hours[0].time).bottom);
   assert.equal(recommendRunningWear([hours[0]],hours[0].time),null);
   assert.equal(recommendRunningWear([hours[0],{...hours[1],feelsLike:null}],hours[0].time),null);
 });
@@ -239,7 +248,7 @@ test('UI intervals align rain probability and gusts to exact return hour',async(
 test('legacy preferences preserve location and comfort while discarding old list field',async()=>{
   const memory=new Map([['runcast.preferences.v1',JSON.stringify({location:{lat:37.55,lon:127,name:'기존 이름'},comfort:'hot',favorites:[ROUTES.seokchon]})]]);
   globalThis.localStorage={getItem:k=>memory.get(k)||null,setItem:(k,v)=>memory.set(k,v)};
-  try{const{preferences}=await import('../assets/mobile-extra.js?legacy-test');assert.equal(preferences.location.name,'기존 이름');assert.equal(preferences.comfort,'hot');assert.equal(Object.hasOwn(preferences,'favorites'),false);}
+  try{const{preferences}=await import('../assets/mobile-extra.js?legacy-test');assert.equal(preferences.location.name,'기존 이름');assert.equal(preferences.comfort,'hot');assert.equal(preferences.bottomFit,'pants');assert.equal(Object.hasOwn(preferences,'favorites'),false);}
   finally{delete globalThis.localStorage;}
 });
 

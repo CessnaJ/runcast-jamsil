@@ -86,13 +86,18 @@ export function feelsLikeComparison(hourly, selectedTime, now = new Date()) {
   return {hour,delta:roundTemperature(current.feelsLike)-roundTemperature(reference.feelsLike),referenceLabel:isToday?'어제':'오늘'};
 }
 export const WEAR_BANDS = [
-  { below:0, top:'보온 긴팔 + 방풍 재킷', bottom:'보온 타이츠', extra:'장갑 · 귀를 덮는 모자' },
-  { below:6, top:'긴팔 베이스 + 가벼운 재킷', bottom:'긴 타이츠', extra:'얇은 장갑' },
-  { below:12, top:'기능성 긴팔', bottom:'긴 타이츠 또는 반바지', extra:'얇은 바람막이 챙기기' },
-  { below:18, top:'얇은 긴팔 또는 반팔', bottom:'반바지', extra:'' },
-  { below:24, top:'통기성 좋은 반팔', bottom:'반바지', extra:'' },
-  { below:Infinity, top:'가벼운 반팔 또는 민소매', bottom:'얇은 반바지', extra:'' },
+  { below:-5, outer:'통기성 있는 방풍 재킷', top:'기모 긴팔', bottom:'기모 러닝팬츠', tights:'기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑 · 넥워머 · 패딩 조끼' },
+  { below:0, outer:'', top:'기모 긴팔', bottom:'얇은 기모 러닝팬츠', tights:'얇은 기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑 · 패딩 조끼' },
+  { below:4, outer:'', top:'약간 두툼한 긴팔', bottom:'약간 두툼한 긴 러닝팬츠', tights:'약간 두툼한 긴 타이즈', socks:'두툼한 양말', accessories:'이어밴드 · 얇은 장갑' },
+  { below:8, outer:'', top:'얇은 긴팔', bottom:'얇은 긴 러닝팬츠', tights:'얇은 긴 타이즈', socks:'일반 양말', accessories:'얇은 장갑 (선택)' },
+  { below:12, outer:'', top:'얇은 긴팔', bottom:'얇은 긴 러닝팬츠', tights:'얇은 긴 타이즈', socks:'일반 양말', accessories:'' },
+  { below:15, outer:'', top:'얇은 긴팔', bottom:'반바지', socks:'일반 양말', accessories:'' },
+  { below:18, outer:'', top:'얇은 반팔', bottom:'반바지', socks:'일반 양말', accessories:'' },
+  { below:24, outer:'', top:'얇은 반팔', bottom:'반바지', socks:'얇은 양말', accessories:'' },
+  { below:Infinity, outer:'', top:'통기성 좋은 아주 얇은 반팔', bottom:'얇은 반바지', socks:'얇은 양말', accessories:'' },
 ];
+// Product defaults for an easy one-hour run, not official weather thresholds.
+export const WEAR_POLICY = { minimumTemperature:-10, windSpeed:4, gusts:8, windLayerBelow:12 };
 // UI departure contract: point values at t, interval values from the exact t+1h.
 export function runningIntervals(hourly) {
   const byTime = new Map(hourly.map(h => [Date.parse(h.time), h]));
@@ -107,17 +112,34 @@ export function runningIntervals(hourly) {
 export function nextDepartureTime(now = new Date()) {
   return new Date(Math.floor(+now / 3600000) * 3600000 + 3600000 + 9*3600000).toISOString().slice(0,19) + '+09:00';
 }
-export function recommendRunningWear(hourly, startTime, preference = 'normal', normalized = false) {
+export function recommendRunningWear(hourly, startTime, preference = 'normal', normalized = false, bottomFit = 'pants') {
   const start = (normalized ? hourly : runningIntervals(hourly)).find(h => h.time === startTime);
   if (!start?.endAt || !Number.isFinite(start.feelsLike) || !Number.isFinite(start.endFeelsLike)) return null;
   const low = Math.min(start.feelsLike,start.endFeelsLike), high = Math.max(start.feelsLike,start.endFeelsLike);
-  const adjusted = Math.round((low + ({cold:-2,hot:2}[preference] || 0))/2)*2;
+  const adjusted = low + ({cold:-2,hot:2}[preference] || 0);
+  const common = { low, high, adjusted, startAt:start.time, endAt:start.endAt };
+  // A warmth preference must not extend the supported range into colder weather.
+  if (low < WEAR_POLICY.minimumTemperature || adjusted < WEAR_POLICY.minimumTemperature) {
+    return { ...common, status:'outside-range', outer:'', top:'', bottom:'', socks:'', accessories:'', notes:['추위가 강해 개인별 방한 준비가 필요해요.'] };
+  }
   const band = WEAR_BANDS.find(b => adjusted < b.below);
-  const windy = [start.windSpeed,start.endWindSpeed].some(v=>Number.isFinite(v)&&v>=8) || (Number.isFinite(start.gusts)&&start.gusts>=12);
+  const windy = [start.windSpeed,start.endWindSpeed].some(v=>Number.isFinite(v)&&v>=WEAR_POLICY.windSpeed)
+    || (Number.isFinite(start.gusts)&&start.gusts>=WEAR_POLICY.gusts);
+  const wet = Number.isFinite(start.precipitation) && start.precipitation > 0;
+  let outer = band.outer;
   const notes = [];
-  if (windy) notes.push('바람 강함 · 휴대용 바람막이 권장');
-  if (Number.isFinite(start.precipitation) && start.precipitation > 0) notes.push('비·눈 가능 · 갈아입을 옷 준비');
-  return { ...band, low, high, windy, notes, startAt:start.time, endAt:start.endAt };
+  if (windy && adjusted < WEAR_POLICY.windLayerBelow && !outer) {
+    outer = adjusted < 0 ? '보통 두께 방풍재킷' : '얇은 바람막이';
+  }
+  if (wet) {
+    if (adjusted < WEAR_POLICY.windLayerBelow) outer = '통기성 있는 방수 러닝 재킷';
+    notes.push(adjusted < WEAR_POLICY.windLayerBelow
+      ? '비·눈 가능 · 갈아입을 옷을 준비하세요.'
+      : '비·눈 가능 · 필요하면 통기성 있는 방수 겉옷과 갈아입을 옷을 준비하세요.');
+  }
+  return { ...common, status:'recommended', outer, top:band.top,
+    bottom:bottomFit === 'tights' && band.tights ? band.tights : band.bottom,
+    socks:band.socks, accessories:band.accessories, windy, wet, notes };
 }
 
 // Run advice is deliberately kept in this browser/server module so a cached

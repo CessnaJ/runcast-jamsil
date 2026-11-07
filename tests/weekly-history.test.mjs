@@ -79,7 +79,7 @@ function fixedDate(iso){const date=new Date(iso);return class extends Date{const
 test('yesterday hides clothing; today renders comparison; missing history omits comparison',()=>{
   const data=normalizeWeekly(payload(),ROUTES.seokchon,now.toISOString());
   const card={hidden:false,innerHTML:'',querySelectorAll:()=>[]};
-  const sandbox={Date:fixedDate(now),$:id=>id==='#wearCard'?card:null,selectedDay:'2026-10-14',selectedTime:'2026-10-14T20:00:00+09:00',weekly:data,intervals:runningIntervals(data.hourly),preferences:{comfort:'normal'},kstDay:()=>kstDay(now),recommendRunningWear,feelsLikeComparison:(h,t)=>feelsLikeComparison(h,t,now),temperatureWithUnit:v=>`${v}°`,icon:()=>''};
+  const sandbox={Date:fixedDate(now),esc:String,$:id=>id==='#wearCard'?card:null,selectedDay:'2026-10-14',selectedTime:'2026-10-14T20:00:00+09:00',weekly:data,intervals:runningIntervals(data.hourly),preferences:{comfort:'normal'},kstDay:()=>kstDay(now),recommendRunningWear,feelsLikeComparison:(h,t)=>feelsLikeComparison(h,t,now),temperatureWithUnit:v=>`${v}°`,icon:()=>''};
   runInNewContext(wear+';renderWear();',sandbox);assert.equal(card.hidden,true);assert.equal(card.innerHTML,'');
   sandbox.selectedDay='2026-10-15';sandbox.selectedTime='2026-10-15T20:00:00+09:00';
   runInNewContext('renderWear();',sandbox);assert.equal(card.hidden,false);assert.match(card.innerHTML,/어제 20시보다 체감 2° 낮아요/);
@@ -91,7 +91,7 @@ test('future clothing renders higher, lower and similar comparisons with today',
   const data=normalizeWeekly(payload(),ROUTES.seokchon,now.toISOString());
   const time='2026-10-17T20:00:00+09:00', selected=data.hourly.find(h=>h.time===time);
   const card={hidden:false,innerHTML:'',querySelectorAll:()=>[]};
-  const sandbox={Date:fixedDate(now),$:id=>id==='#wearCard'?card:null,selectedDay:'2026-10-17',selectedTime:time,weekly:data,intervals:runningIntervals(data.hourly),preferences:{comfort:'normal'},kstDay:()=>kstDay(now),recommendRunningWear,feelsLikeComparison:(h,t)=>feelsLikeComparison(h,t,now),temperatureWithUnit:v=>`${v}°`,icon:()=>''};
+  const sandbox={Date:fixedDate(now),esc:String,$:id=>id==='#wearCard'?card:null,selectedDay:'2026-10-17',selectedTime:time,weekly:data,intervals:runningIntervals(data.hourly),preferences:{comfort:'normal'},kstDay:()=>kstDay(now),recommendRunningWear,feelsLikeComparison:(h,t)=>feelsLikeComparison(h,t,now),temperatureWithUnit:v=>`${v}°`,icon:()=>''};
   runInNewContext(wear,sandbox);
   for(const [feelsLike,copy] of [[15,'오늘 20시보다 체감 3° 높아요'],[9,'오늘 20시보다 체감 3° 낮아요'],[12.1,'오늘 20시와 체감이 비슷해요']]){
     selected.feelsLike=feelsLike;

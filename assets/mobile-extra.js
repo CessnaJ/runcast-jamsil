@@ -12,6 +12,7 @@ const saved = storage.read('runcast.preferences.v1', {});
 export const preferences = {
   location: safeLocation(saved.location) || ROUTES.seokchon,
   comfort: ['cold','normal','hot'].includes(saved.comfort) ? saved.comfort : 'normal',
+  bottomFit: ['pants','tights'].includes(saved.bottomFit) ? saved.bottomFit : 'pants',
 };
 export function readForecastCache(type,key) {
   const all = storage.read(`runcast.cache.${type}.v1`, {}), value = all?.[key];
@@ -168,7 +169,7 @@ export function createExtras(state, hooks) {
   }
   function renderWeekly() {
     const pageScroll=window.scrollY;const root=$('#weeklyContent'), scroll=$('.hourly-scroll')?.scrollLeft, dayScroll=$('.day-rail')?.scrollLeft;
-    const focus=document.activeElement;const focusKey=focus?.dataset.comfort?['comfort',focus.dataset.comfort]:focus?.dataset.hour?['hour',focus.dataset.hour]:focus?.dataset.day?['day',focus.dataset.day]:focus?.id?['id',focus.id]:null;
+    const focus=document.activeElement;const focusKey=focus?.dataset.comfort?['comfort',focus.dataset.comfort]:focus?.dataset.bottomFit?['bottom-fit',focus.dataset.bottomFit]:focus?.dataset.hour?['hour',focus.dataset.hour]:focus?.dataset.day?['day',focus.dataset.day]:focus?.id?['id',focus.id]:null;
     const openDetails=[...root.querySelectorAll('details[open]')].map(d=>d.id);
     renderWeeklyStamp();
     if(!weekly){root.innerHTML=`<div class="empty-state" aria-live="polite">${loading?'<span class="loading-orbit"></span><p>날씨를 확인하고 있어요</p>':'<p>날씨를 불러오지 못했어요</p><button id="retryWeekly">다시 시도</button>'}</div>`;$('#retryWeekly')?.addEventListener('click',()=>loadWeekly(true));return;}
@@ -219,10 +220,17 @@ export function createExtras(state, hooks) {
     card.hidden=selectedDay<kstDay();if(card.hidden){card.innerHTML='';return;}
     const comparison=feelsLikeComparison(weekly.hourly,selectedTime);
     const comparisonText=comparison?(comparison.delta===0?`${comparison.referenceLabel} ${comparison.hour}시와 체감이 비슷해요`:`${comparison.referenceLabel} ${comparison.hour}시보다 체감 ${Math.abs(comparison.delta)}° ${comparison.delta<0?'낮아요':'높아요'}`):'';
-    const recommendation=recommendRunningWear(intervals,selectedTime,preferences.comfort,true);const model=intervals.find(h=>h.time===selectedTime);
+    const recommendation=recommendRunningWear(intervals,selectedTime,preferences.comfort,true,preferences.bottomFit);const model=intervals.find(h=>h.time===selectedTime);
     const past=Date.parse(selectedTime)<Date.now();const time=`${selectedTime?.slice(11,16)||'—'}–${model?.endAt?.slice(11,16)||'—'}${model?.endAt?.slice(0,10)!==selectedTime?.slice(0,10)&&model?.endAt?' (다음 날)':''}`;
-    card.innerHTML=`${past?'<p class="past-note">지난 시간 기준</p>':''}<p class="wear-title">1시간 러닝 옷차림</p><p class="wear-time">${time} · ${recommendation?`체감 ${temperatureWithUnit(recommendation.low)}–${temperatureWithUnit(recommendation.high)}`:'체감 자료 없음'}</p>${comparisonText?`<p class="wear-comparison">${comparisonText}</p>`:''}${recommendation?`<p class="wear-combination">${recommendation.top} · ${recommendation.bottom}</p>${[recommendation.extra,...recommendation.notes].filter(Boolean).filter((n,i,a)=>!n.includes('바람막이')||!a.some((other,j)=>j!==i&&other.includes('바람 강함'))).slice(0,2).map(n=>`<p class="wear-note">${n}</p>`).join('')}`:''}<details id="comfortDetails" class="comfort-details" ${wasOpen?'open':''}><summary id="comfortSummary">내 체감: ${{cold:'추위를 많이 탐',normal:'보통',hot:'더위를 많이 탐'}[preferences.comfort]} ${icon('chevron')}</summary><div class="comfort-options" role="group" aria-label="내 체감">${[['cold','추위를 많이 탐'],['normal','보통'],['hot','더위를 많이 탐']].map(([v,l])=>`<button data-comfort="${v}" aria-pressed="${preferences.comfort===v}">${l}</button>`).join('')}</div><p>가벼운 1시간 러닝 기준이며 바람·습도는 체감온도에 반영돼요. 강풍 안내는 준비물 참고용이고 공식 특보가 아니에요.</p></details>`;
+    const rows=recommendation?.status==='recommended'
+      ? [['겉옷',recommendation.outer],['상의',recommendation.top],['하의',recommendation.bottom],['양말',recommendation.socks],['보조',recommendation.accessories]].filter(([,item])=>item)
+      : [];
+    const outfit=rows.length?`<dl class="wear-outfit">${rows.map(([label,item])=>`<div class="wear-row"><dt>${label}</dt><dd>${esc(item)}</dd></div>`).join('')}</dl>`:'';
+    const notes=recommendation?.notes.map(note=>`<p class="wear-note">${esc(note)}</p>`).join('') || '';
+    const guide='<figure class="wear-guide"><a href="/assets/running-wear-guide.png" target="_blank" rel="noopener noreferrer" aria-label="체감온도별 러닝 옷차림 안내 이미지 크게 보기"><img src="/assets/running-wear-guide.png" width="724" height="2172" loading="lazy" decoding="async" alt="체감온도별 1시간 러닝 옷차림 안내. 영하 10도부터 24도 이상까지 9개 구간의 옷과 보조품을 보여줘요."></a><figcaption>이미지를 누르면 크게 볼 수 있어요.</figcaption></figure>';
+    card.innerHTML=`${past?'<p class="past-note">지난 시간 기준</p>':''}<p class="wear-title">1시간 러닝 옷차림</p><p class="wear-time">${time} · ${recommendation?`체감 ${temperatureWithUnit(recommendation.low)}–${temperatureWithUnit(recommendation.high)}`:'체감 자료 없음'}</p>${comparisonText?`<p class="wear-comparison">${comparisonText}</p>`:''}${outfit}${notes}<details id="comfortDetails" class="comfort-details" ${wasOpen?'open':''}><summary id="comfortSummary"><span>내 체감: ${{cold:'추위를 많이 탐',normal:'보통',hot:'더위를 많이 탐'}[preferences.comfort]} · ${preferences.bottomFit==='tights'?'타이즈':'팬츠'}</span>${icon('chevron')}</summary><fieldset class="wear-preference"><legend>내 체감</legend><div class="comfort-options" role="group" aria-label="내 체감">${[['cold','추위를 많이 탐'],['normal','보통'],['hot','더위를 많이 탐']].map(([v,l])=>`<button data-comfort="${v}" aria-pressed="${preferences.comfort===v}">${l}</button>`).join('')}</div></fieldset><fieldset class="wear-preference"><legend>긴 하의 선호</legend><div class="comfort-options" role="group" aria-label="긴 하의 선호">${[['pants','팬츠'],['tights','타이즈']].map(([v,l])=>`<button data-bottom-fit="${v}" aria-pressed="${(preferences.bottomFit||'pants')===v}">${l}</button>`).join('')}</div></fieldset><p>가벼운 1시간 러닝의 기본 조합이에요. 바람·습도는 체감온도에 반영되며, 더워지면 겉옷을 벗거나 지퍼를 열어 조절하세요.</p></details>${guide}`;
     card.querySelectorAll('[data-comfort]').forEach(b=>b.onclick=()=>{preferences.comfort=b.dataset.comfort;persist();renderWear();$('#comfortDetails').open=true;card.querySelector(`[data-comfort="${preferences.comfort}"]`).focus({preventScroll:true});});
+    card.querySelectorAll('[data-bottom-fit]').forEach(b=>b.onclick=()=>{preferences.bottomFit=b.dataset.bottomFit;persist();renderWear();$('#comfortDetails').open=true;card.querySelector(`[data-bottom-fit="${preferences.bottomFit}"]`).focus({preventScroll:true});});
   }
   function boot() {
     updateLocationBar();$('#locationBtn').onclick=openPicker;$('#closeLocation').onclick=closePicker;$('#locationDialog').addEventListener('close',()=>{++dialogToken;});
