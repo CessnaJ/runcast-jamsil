@@ -403,6 +403,15 @@ function cacheSummary(trace = []) {
   return { schema: "v1", events: trace, states, entries: rawCache.size, inflight: inflightCache.size };
 }
 
+// Keep the successful source fetch time, including cache hits and stale fallback.
+// Response assembly time is not the time these provider values were received.
+function forecastReceipt(trace, provider, dataset, issuedAt = null) {
+  const success = new Set(['stored', 'fresh-hit', 'stale-if-error', 'stale-cooldown', 'coalesced-result']);
+  const entry = trace.findLast(event => event.provider === provider && event.dataset === dataset
+    && success.has(event.state) && (!issuedAt || event.sourceIssuedAt === issuedAt));
+  return { fetchedAt: entry?.fetchedAt || null, stale: Boolean(entry?.stale) };
+}
+
 export function resetRawCacheForTest() {
   rawCache.clear();
   inflightCache.clear();
@@ -596,6 +605,7 @@ async function getKmaForecast(serviceKey, route, requestedMinutes = [0, 30, 60, 
   // 해당 절대 시각에 맞춰 조회합니다. 9시간 값을 06시/20시에 억지로 쓰지 않습니다.
   const offsets = allMinutes.filter((minutes) => minutes <= 360);
   const issuedAt = forecastTimestamp(baseDate, baseTime);
+  const receipt = forecastReceipt(cacheTrace, 'kma', 'ultra-srt-fcst', issuedAt.toISOString());
   const ultraForecast = offsets.map((minutes) => {
     const target = new Date(now.getTime() + minutes * 60_000);
     const group = nearestForecast(groups, target);
@@ -615,6 +625,7 @@ async function getKmaForecast(serviceKey, route, requestedMinutes = [0, 30, 60, 
       windSpeed: numberOrNull(group?.WSD),
       sourceTime: group?.date?.toISOString() || null,
       issuedAt: issuedAt.toISOString(),
+      sourceFetchedAt: receipt.fetchedAt, sourceStale: receipt.stale,
       issueAgeMinutes: Math.max(0, Math.round((now.getTime() - issuedAt.getTime()) / 60_000)),
       targetDiffMinutes: group?.targetDiffMinutes ?? null,
       previousHourMm: parseRainMm(previousGroup?.RN1),
@@ -644,6 +655,11 @@ async function getKmaForecast(serviceKey, route, requestedMinutes = [0, 30, 60, 
         probabilityRain: Boolean(probabilityForecast?.rain),
         probabilityLevel: probabilityForecast?.level || "none",
         probabilityAmountText: probabilityForecast?.amountText || null,
+        villagePrecipitationType: probabilityForecast?.precipitationType ?? null,
+        probabilityMeta: probabilityForecast ? {
+          issuedAt: probabilityForecast.issuedAt, sourceTime: probabilityForecast.sourceTime,
+          fetchedAt: probabilityForecast.sourceFetchedAt, stale: probabilityForecast.sourceStale,
+        } : null,
         villageMm: probabilityForecast?.mm ?? null,
         previousHourMm: probabilityForecast?.previousHourMm ?? item.previousHourMm,
         nextHourMm: probabilityForecast?.nextHourMm ?? item.nextHourMm,
@@ -699,6 +715,7 @@ async function getKmaVilageForecastSet(serviceKey, route, minutesList, now = new
       groups.get(key)[item.category] = item.fcstValue;
     }
     const issuedAt = forecastTimestamp(baseDate, baseTime);
+    const receipt = forecastReceipt(cacheTrace, 'kma', 'village-fcst', issuedAt.toISOString());
     return minutesList.map((minutes) => {
       const target = new Date(now.getTime() + minutes * 60_000);
       const group = nearestForecast(groups, target);
@@ -714,6 +731,7 @@ async function getKmaVilageForecastSet(serviceKey, route, minutesList, now = new
         temperature: numberOrNull(group.TMP), humidity: numberOrNull(group.REH), windSpeed: numberOrNull(group.WSD),
         probability: numberOrNull(group.POP), probabilitySource: "단기예보", sourceTime: group.date?.toISOString() || null,
         issuedAt: issuedAt.toISOString(),
+        sourceFetchedAt: receipt.fetchedAt, sourceStale: receipt.stale,
         issueAgeMinutes: Math.max(0, Math.round((now.getTime() - issuedAt.getTime()) / 60_000)),
         targetDiffMinutes: group.targetDiffMinutes,
         previousHourMm: parseRainMm(previousGroup?.PCP),
@@ -789,6 +807,7 @@ async function getMultiModelForecast(route, minutesList, now = new Date(), cache
     cycle: "rolling-2d", variant: `hourly-pop-precip-${modelSet}`,
   }), () => fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, { timeout: 15_000 }), { trace: cacheTrace });
   const hourly = payload?.hourly || {};
+  const receipt = forecastReceipt(cacheTrace, 'open-meteo', 'forecast');
   const times = (hourly.time || []).map((value) => new Date(`${value}:00+09:00`));
   const models = [
     { id: "kma", label: "KMA", probability: "precipitation_probability_kma_seamless", amount: "precipitation_kma_seamless" },
@@ -834,7 +853,7 @@ async function getMultiModelForecast(route, minutesList, now = new Date(), cache
       || (Number.isFinite(model.nextAmount) && model.nextAmount >= 0.2)
     ).length;
     return {
-      minutes, validAt: times[index]?.toISOString() || null, models: values,
+      minutes, validAt: times[index]?.toISOString() || null, models: values, ...receipt,
       probabilityAverage: roundToFive(average(probabilities)),
       probabilityMin: probabilities.length ? Math.min(...probabilities) : null,
       probabilityMax: probabilities.length ? Math.max(...probabilities) : null,
@@ -1278,7 +1297,7 @@ async function getStatus() {
 async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
-    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/install-guide.mjs", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/refresh-scheduler.mjs", "assets/visit-tracker.mjs", "assets/ui-icons.mjs", "assets/cctv-domain.mjs", "assets/cctv-client.mjs", "sw.js",
+    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/install-guide.mjs", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/forecast-details.mjs", "assets/refresh-scheduler.mjs", "assets/visit-tracker.mjs", "assets/ui-icons.mjs", "assets/cctv-domain.mjs", "assets/cctv-client.mjs", "sw.js",
     "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/apple-touch-icon-v2.png", "assets/pwa-icon-192.png",
     "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png", "assets/running-wear-guide.png",
     "assets/apple-startup-1320x2868.png", "assets/apple-startup-1206x2622.png",

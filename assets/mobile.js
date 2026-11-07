@@ -5,6 +5,7 @@ import { createRefreshScheduler, REFRESH_INTERVALS, REFRESH_TIMEOUTS } from './r
 import { icon } from './ui-icons.mjs';
 import { createInstallGuide, createInstallController } from './install-guide.mjs';
 import { createVisitTracker } from './visit-tracker.mjs';
+import { renderForecastDetails } from './forecast-details.mjs';
 
 
 // 이전 버전이 브라우저에 저장했던 비밀 키를 더 이상 사용하지 않고 제거합니다.
@@ -266,25 +267,16 @@ function evidenceRows() {
 }
 
 function renderEvidence() {
-  const { mode, first, models, recent, surface }=evidenceRows();
+  const { mode, first, recent, surface }=evidenceRows();
   const recentCopy=recent ? `최근 3시간 ${recent.recentTotalMm}mm · ${surface.short}` : "최근 강수 자료가 없어 노면을 추정하지 못했어요";
-  const modelsCopy=models?.availableModels
-    ? `출발 무렵 ${models.availableModels}개 중 ${models.wetVotes || 0}개가 비를 예상해요`
+  const models=first?.multiModel?.models || [];
+  const modelsCopy=models.length
+    ? `출발 무렵 ${models.length}개 중 ${runSampleMetrics(first).wetVotes}개가 비를 예상해요`
     : "비교할 다른 예보가 없어요";
   const surfaceRow=mode?.immediate ? `<div class="evidence-item"><b>노면</b><small>${escapeHtml(recentCopy)}</small></div>` : '';
   $('#evidenceSummary').innerHTML=`${surfaceRow}<div class="evidence-item"><b>다른 예보</b><small>${escapeHtml(modelsCopy)}</small></div>`;
-  const officialSource=first?.sourceLabel || "기상청 예보 자료 없음";
-  const issuedAt=first?.issuedAt, targetAt=first?.sourceTime;
-  const officialDetail=[officialSource,issuedAt?`발표 ${extras.stamp(issuedAt)}`:null,targetAt?`예보 시각 ${extras.stamp(targetAt)}`:null].filter(Boolean).join(" · ");
-  const modelDetail=[models?.validAt?`예보 시각 ${escapeHtml(extras.stamp(models.validAt))}`:null,(models?.models || []).map(model=>`${escapeHtml(model.label)}: ${Number.isFinite(model.probability)?`${model.probability}%`:"확률 자료 없음"} · ${Number.isFinite(model.amount)?`${Number(model.amount.toFixed(2))}mm`:"강수량 자료 없음"}`).join("<br>")].filter(Boolean).join("<br>") || "비교 가능한 다른 예보 자료가 없어요.";
   const thermal=state.thermal?.locationKey===locationKey(state.location)?state.thermal:null;
-  const thermalSource=thermal?.data?.source||"Open-Meteo";
-  const thermalDetail=thermal?.data?.fetchedAt
-    ? `${thermalSource} · 자료 갱신 ${extras.stamp(thermal.data.fetchedAt)} · 시간별 예보`
-    : thermal?.status==='loading' ? "Open-Meteo · 기온 자료를 불러오는 중"
-    : "Open-Meteo · 기온 자료 없음";
-  const surfaceDetail=recent ? `최근 강수와 시간대 예보로 노면을 추정해요. CCTV 원본은 현장을 영상으로 확인할 때 쓰며, 아직 분석하지 않은 영상은 판단에 반영하지 않아요.` : "최근 강수 자료가 없어 노면 상태를 추정하지 않아요.";
-  $('#evidenceDetail').innerHTML=`<div class="detail-fact"><b>눈·비: 기상청</b><span>${escapeHtml(officialDetail)}</span></div><div class="detail-fact"><b>기온: ${escapeHtml(thermalSource)}</b><span>${escapeHtml(thermalDetail)}</span></div><div class="detail-fact"><b>모델별 출발 무렵</b><span>${modelDetail}</span></div>${mode?.immediate ? `<div class="detail-fact"><b>노면 추정</b><span>${escapeHtml(surfaceDetail)}</span></div>` : ''}<p class="detail-note">기온은 출발·복귀 정시의 시간별 예보를 사용하고 정시 사이에는 해당 시간대 예보를 보여드려요. 강수확률은 러닝 구간 최대값, 강수량은 1시간 예상 누적량이에요. 눈·비는 기상청, 기온·체감·옷차림은 Open-Meteo 자료를 사용해요.</p>`;
+  $('#evidenceDetail').innerHTML=renderForecastDetails({mode,thermal,recent,cached:state.usingCachedData});
 }
 
 function cctvStatus(camera) {
