@@ -876,16 +876,53 @@ select:focus-visible,
   margin: 4px 0 8px;
 }
 .history-context .text-button { min-height: 44px; font-size: 12px; }
-.wear-combination {
+.wear-outfit {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.wear-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: baseline;
+}
+.wear-row dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+.wear-row dd {
+  min-width: 0;
+  margin: 0;
   font-size: 16px;
   font-weight: 600;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .wear-note {
   font-size: 14px;
   color: var(--muted);
   line-height: 1.6;
   margin-top: 5px;
+}
+.wear-guide {
+  margin: 18px 0 0;
+}
+.wear-guide a {
+  display: block;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.wear-guide img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.wear-guide figcaption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 .past-note {
   font-size: 12px;
@@ -896,12 +933,31 @@ select:focus-visible,
   margin-top: 10px;
 }
 .comfort-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   min-height: 44px;
   padding: 11px 0;
   color: var(--muted);
   font-size: 14px;
   cursor: pointer;
   list-style: none;
+}
+.comfort-details summary::-webkit-details-marker {
+  display: none;
+}
+.wear-preference {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+}
+.wear-preference legend {
+  margin-bottom: 6px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
 }
 .comfort-options {
   display: flex;
