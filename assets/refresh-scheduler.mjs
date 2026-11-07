@@ -141,6 +141,7 @@ export function createRefreshScheduler(options = {}) {
   const storage = safeStorage(options.storage);
   const records = new Map();
   const inflight = new Map();
+  const manualIntervalFor = options => Math.max(0, finite(options.manualMinIntervalMs) ?? policy.manualMinIntervalMs);
 
   const jittered = base => {
     const jitter = Math.min(policy.jitterCapMs, base * policy.jitterRatio);
@@ -200,7 +201,7 @@ export function createRefreshScheduler(options = {}) {
     const serverBlocked = serverGate(meta, options.serverRetryAt);
     if (serverBlocked) return { allowed: false, reason: "server-retry", meta: cloneMeta(meta) };
     if (inflight.has(meta.key)) return { allowed: true, shared: true, reason: "inflight", meta: cloneMeta(meta) };
-    if (manual && meta.lastAttemptAt != null && current - meta.lastAttemptAt < policy.manualMinIntervalMs) {
+    if (manual && meta.lastAttemptAt != null && current - meta.lastAttemptAt < manualIntervalFor(options)) {
       return { allowed: false, reason: "manual-rate", meta: cloneMeta(meta) };
     }
     if (!manual && meta.nextEligibleAt != null && current < meta.nextEligibleAt) {
@@ -268,7 +269,7 @@ export function createRefreshScheduler(options = {}) {
     const timeoutMs = Math.max(0, finite(options.timeoutMs) ?? policy.requestTimeoutMs);
     const controller = new AbortController();
     const startedAt = now();
-    const leaseMs = Math.max(policy.manualMinIntervalMs, timeoutMs);
+    const leaseMs = Math.max(manualIntervalFor(options), timeoutMs);
     meta.startedAt = startedAt;
     meta.lastAttemptAt = startedAt;
     // A persisted, finite lease prevents a cold restart from immediately
