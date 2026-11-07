@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ROUTES, resolveLocation, isSupportedLocation, normalizeWeekly, recommendRunningWear, hourlyBucketEpoch, hourlyPointAt, hourlyTemperatureAt, roundTemperature, evaluateRunWindow } from '../assets/weather-domain.mjs';
+import { renderForecastDetails } from '../assets/forecast-details.mjs';
 process.env.VERCEL='1';
 const { assessRunForecast, makeDecision, summarizeRunWindow, cachedRawLoad, resetRawCacheForTest, requestHandler, loadLocalKeys, parseItsCctvResponse } = await import('../server.mjs');
 
@@ -323,6 +324,7 @@ test('current surface evidence appears only for an immediate run, including expa
     const nodes={'#evidenceSummary':{},'#evidenceDetail':{}};
     runInNewContext(`${render}; renderEvidence();`,{
       $:selector=>nodes[selector],escapeHtml:String,extras:{stamp:String},
+      renderForecastDetails,
       state:{location:{},thermal:null},locationKey:()=>'',
       evidenceRows:()=>({mode:{immediate},first:{},models:null,recent:{recentTotalMm:0},surface:{short:'건조 추정'}}),
     });
