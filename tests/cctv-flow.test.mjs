@@ -6,7 +6,7 @@ import {loadCctv} from '../assets/cctv-client.mjs';
 import {CCTV_POLICY as P,selectCctvRows,validCctvUrl} from '../assets/cctv-domain.mjs';
 
 const point={lat:37.5082,lon:127.1001};
-const camera={coordy:37.51,coordx:127.11,cctvname:'테스트 CCTV',cctvurl:'https://cctvsec.ktict.co.kr:8090/test',cctvtype:'3'};
+const camera={coordy:37.51,coordx:127.11,cctvname:'테스트 CCTV',cctvurl:'https://cctvsec.ktict.co.kr/539/signed+mp4==',cctvtype:'5',cctvformat:'MP4'};
 function fixture(){let time=Date.now();const broker=createCctvBroker({apiKey:'test-key',now:()=>time});return {broker,advance:ms=>time+=ms};}
 const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
 
@@ -21,6 +21,7 @@ function transport(broker,{rejectUpload=false,itsError=false,onUpload=()=>{}}={}
       return json(broker.complete(point,JSON.parse(options.body)));
     }
     assert.equal(url.hostname,'openapi.its.go.kr');
+    assert.equal(url.searchParams.get('cctvType'),'5');
     assert.equal(options.mode,'cors');assert.equal(options.credentials,'omit');
     assert.equal(options.referrerPolicy,'no-referrer');
     if(itsError)throw new TypeError('Network request failed');
@@ -31,11 +32,25 @@ function transport(broker,{rejectUpload=false,itsError=false,onUpload=()=>{}}={}
 test('cache miss issues one lease; cache hit returns list without API key; replay is rejected',()=>{
   const {broker}=fixture();const first=broker.prepare(point);
   assert.equal(first.acquisition.request.params.apiKey,'test-key');
+  assert.equal(first.acquisition.request.params.cctvType,'5');
   const waiting=broker.prepare(point);assert.equal(waiting.acquisition,null);assert.equal(waiting.cctv.pending,true);
   broker.complete(point,{token:first.acquisition.token,rows:[camera]});
   const hit=broker.prepare(point);assert.equal(hit.cctvs.length,1);assert.equal(hit.acquisition,null);
+  assert.equal(hit.cctvs[0].url,camera.cctvurl);
+  assert.equal(hit.cctvs[0].cctvType,'5');
+  assert.equal(hit.cctvs[0].format,'MP4');
   assert.ok(!JSON.stringify(hit).includes('test-key'));
   assert.throws(()=>broker.complete(point,{token:first.acquisition.token,rows:[]}),{statusCode:409});
+});
+
+test('local AI can explicitly request still images independently of public MP4 links',()=>{
+  const broker=createCctvBroker({apiKey:'test-key',cctvType:'3'});
+  const prepared=broker.prepare(point);
+  assert.equal(prepared.acquisition.request.params.cctvType,'3');
+  const still={...camera,cctvurl:'http://cctvsec.ktict.co.kr:8090/539/signed-still',cctvtype:'3',cctvformat:'JPEG'};
+  const saved=broker.complete(point,{token:prepared.acquisition.token,rows:[still]});
+  assert.equal(saved.cctvs[0].cctvType,'3');
+  assert.equal(saved.cctvs[0].format,'JPEG');
 });
 
 test('abandoned leases expire; failures impose cooldown; stale lists have a hard lifetime',()=>{
@@ -61,6 +76,7 @@ test('upload validates token, location, camera URL and does not accept weather a
 
 test('valid port 8090 is allowed, misleading hosts and credentials are rejected',()=>{
   assert.equal(validCctvUrl(camera.cctvurl),true);
+  assert.equal(validCctvUrl('http://cctvsec.ktict.co.kr:8090/still'),true);
   for(const url of ['https://cctvsec.ktict.co.kr.evil.test/','https://x@cctvsec.ktict.co.kr/','https://cctvsec.ktict.co.kr:1234/'])assert.equal(validCctvUrl(url),false);
   assert.equal(selectCctvRows([camera,camera],point).length,1);
 });
@@ -76,6 +92,8 @@ test('browser displays ITS result before upload; subsequent call uses BE cache o
   const io=transport(broker,{onUpload:()=>assert.equal(shown,true)});
   const result=await loadCctv({location:point,fetchImpl:io.fetch,onReady:()=>shown=true});
   assert.equal(result.cctvs.length,1);assert.equal(result.acquisition,undefined);
+  assert.equal(result.cctvs[0].url,camera.cctvurl);
+  assert.equal(result.cctvs[0].format,'MP4');
   assert.deepEqual(io.calls,['/api/cctv-prepare','ITS','/api/cctv-complete']);
   io.calls.length=0;await loadCctv({location:point,fetchImpl:io.fetch});
   assert.deepEqual(io.calls,['/api/cctv-prepare']);
@@ -125,7 +143,7 @@ test('browser acquisition reaches the deployed handler through single-level API 
     const {default:handler}=await import('../api/[...path].mjs');
     const routes=[];
     const fetchImpl=async(url,options)=>{
-      if(url instanceof URL)return json({response:{data:[camera]}});
+      if(url instanceof URL){assert.equal(url.searchParams.get('cctvType'),'5');return json({response:{data:[camera]}});}
       assert.match(url,/^\/api\/[^/]+$/,'CCTV endpoints must use the existing single-level deployment route');
       routes.push(url);
       const request=Object.assign(Readable.from([Buffer.from(options.body)]),{url,method:options.method,headers:options.headers});

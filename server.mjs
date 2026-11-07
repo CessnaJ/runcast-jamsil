@@ -21,7 +21,7 @@ const LOCAL_AI_ENABLED = RUNTIME_MODE === "local" && process.env.RUNCAST_AI_ENAB
 const ENVIRONMENT = await loadRuntimeEnv(ROOT);
 const LOCAL_KEYS = await loadLocalKeys(ROOT, ENVIRONMENT);
 const knownCctvUrls = new Set();
-const cctvBroker = createCctvBroker({apiKey:LOCAL_KEYS.itsApiKey,onCameras:cameras=>{for(const camera of cameras)knownCctvUrls.add(camera.url);}});
+const cctvBroker = createCctvBroker({apiKey:LOCAL_KEYS.itsApiKey,cctvType:LOCAL_AI_ENABLED?'3':'5',onCameras:cameras=>{for(const camera of cameras)knownCctvUrls.add(camera.url);}});
 let activeRadarKey = "";
 const radarCache = new Map();
 // UI 결과가 아닌 외부 원천 응답만 인스턴스 메모리에 둡니다.
