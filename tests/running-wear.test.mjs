@@ -50,6 +50,17 @@ test('comfort changes classification only, and lower return temperature drives t
   assert.equal(wear(13,'hot').top,'얇은 반팔');
 });
 
+test('minus five to zero degrees includes a light shell even without wind or precipitation',()=>{
+  for (const temperature of [-5,-1,-0.01]) {
+    const result=wear(temperature);
+    assert.equal(result.outer,'얇은 바람막이',`${temperature}°`);
+    assert.equal(result.windy,false);assert.equal(result.wet,false);
+  }
+  assert.equal(wear(-1,'normal','pants',{windSpeed:3.99,gusts:7.99}).outer,'얇은 바람막이');
+  assert.equal(wear(-5.01).outer,'통기성 있는 방풍 재킷');
+  assert.equal(wear(0).outer,'');
+});
+
 test('pants and tights preserve warmth while shorts are independent of fit preference',()=>{
   for (const [temperature,expected] of [[-8,'기모 긴 타이즈'],[-2,'얇은 기모 긴 타이즈'],[2,'약간 두툼한 긴 타이즈'],[6,'얇은 긴 타이즈'],[10,'얇은 긴 타이즈']]) {
     const pants=wear(temperature), tights=wear(temperature,'normal','tights');
@@ -71,11 +82,15 @@ test('wind layers use either endpoint wind or interval gust without changing tem
   const data=samples(6);data[0].windSpeed=4;
   assert.equal(recommendRunningWear(data,startTime).outer,'얇은 바람막이');
   assert.equal(wear(-2,'normal','pants',{windSpeed:4}).outer,'보통 두께 방풍재킷');
+  assert.equal(wear(-1,'normal','pants',{gusts:8}).outer,'보통 두께 방풍재킷');
   assert.equal(wear(-8,'normal','pants',{gusts:20}).outer,'통기성 있는 방풍 재킷');
   assert.equal(wear(12,'normal','pants',{windSpeed:4}).outer,'');
 });
 
 test('rain replaces the cold shell, keeps warmth level, and offers an optional shell in warm weather',()=>{
+  for (const end of [{precipitation:.1},{precipitation:.1,windSpeed:4}]) {
+    assert.equal(wear(-1,'normal','pants',end).outer,'통기성 있는 방수 러닝 재킷');
+  }
   const wet=wear(2,'normal','pants',{precipitation:.1,windSpeed:4});
   assert.equal(wet.outer,'통기성 있는 방수 러닝 재킷');
   assert.equal(wet.top,wear(2).top);assert.equal(wet.bottom,wear(2).bottom);
