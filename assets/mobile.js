@@ -953,7 +953,45 @@ window.addEventListener('popstate',()=>{
 });
 function openSettings(){void openSheet($('#settingsSheet'));}
 function closeSettings(){$('#settingsSheet').close();}
-let statsRequest = null;
+let statsRequest = null, statsSnapshot = null, selectedStatsDate = null;
+function renderStats() {
+  const stats = statsSnapshot;
+  const history = stats.history || [stats];
+  const day = history.find(item => item.date === selectedStatsDate) || history.at(-1);
+  selectedStatsDate = day.date;
+  const display = value => value == null ? '—' : value.toLocaleString('ko-KR');
+  const values = {
+    statsTotal: day.total, statsAll: day.total,
+    statsIos: day.byOs.ios, statsAndroid: day.byOs.android,
+    statsWeb: day.byMode.web, statsPwa: day.byMode.pwa,
+    statsIosWeb: day.breakdown.ios.web, statsIosPwa: day.breakdown.ios.pwa,
+    statsAndroidWeb: day.breakdown.android.web, statsAndroidPwa: day.breakdown.android.pwa,
+  };
+  for (const [id, value] of Object.entries(values)) $(`#${id}`).textContent = display(value);
+  $('#statsDayLabel').textContent = day.date === stats.date ? '오늘 방문한 휴대폰' : '이날 방문한 휴대폰';
+  $('#statsDate').textContent = `${day.date.replaceAll('-', '. ')} · 한국 시간`;
+  $('#statsUpdated').textContent = day.collected === false ? '집계를 시작하기 전 날짜예요.' : `${day.partial ? '집계를 시작한 날이라 일부 시간만 포함돼요. · ' : ''}확인 ${formatTime(new Date(stats.asOf))}`;
+  const buttons = history.map(item => {
+    const date = new Date(`${item.date}T12:00:00+09:00`);
+    const weekday = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', weekday: 'short' }).format(date);
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'stats-day';
+    button.setAttribute('aria-pressed', String(item.date === day.date));
+    button.setAttribute('aria-label', `${item.date} ${weekday}요일, ${item.collected === false ? '집계 전' : `${display(item.total)}대`}${item.date === stats.date ? ', 오늘' : ''}`);
+    const label = document.createElement('span'); label.textContent = `${Number(item.date.slice(5, 7))}/${Number(item.date.slice(8))}`;
+    const count = document.createElement('strong'); count.textContent = display(item.total);
+    const week = document.createElement('small'); week.textContent = item.date === stats.date ? '오늘' : weekday;
+    button.append(label, count, week);
+    button.onclick = () => {
+      selectedStatsDate = item.date;
+      const index = history.indexOf(item);
+      renderStats();
+      $('#statsHistory').children[index]?.focus({ preventScroll: true });
+    };
+    return button;
+  });
+  $('#statsHistory').replaceChildren(...buttons);
+}
 function loadStats() {
   if (statsRequest) return statsRequest;
   const button = $('#refreshStats'), status = $('#statsStatus'), content = $('#statsContent');
@@ -963,20 +1001,12 @@ function loadStats() {
   status.textContent = '통계를 불러오고 있어요.';
   content.hidden = true;
   statsRequest = visitTracker.readStats().then(stats => {
-    const values = {
-      statsTotal: stats.total, statsAll: stats.total,
-      statsIos: stats.byOs.ios, statsAndroid: stats.byOs.android,
-      statsWeb: stats.byMode.web, statsPwa: stats.byMode.pwa,
-      statsIosWeb: stats.breakdown.ios.web, statsIosPwa: stats.breakdown.ios.pwa,
-      statsAndroidWeb: stats.breakdown.android.web, statsAndroidPwa: stats.breakdown.android.pwa,
-    };
-    for (const [id, value] of Object.entries(values)) $(`#${id}`).textContent = value.toLocaleString('ko-KR');
-    $('#statsDate').textContent = `${stats.date.replaceAll('-', '. ')} · 한국 시간`;
-    $('#statsUpdated').textContent = `집계 시작 ${formatTime(new Date(stats.startedAt))} · 확인 ${formatTime(new Date(stats.asOf))}`;
+    statsSnapshot = stats;
+    renderStats();
     status.hidden = true;
     content.hidden = false;
-  }).catch(() => {
-    status.textContent = navigator.onLine === false ? '오프라인에서는 통계를 확인할 수 없어요. 연결 후 다시 눌러 주세요.' : '통계를 불러오지 못했어요. 잠시 후 다시 눌러 주세요.';
+  }).catch(error => {
+    status.textContent = navigator.onLine === false ? '오프라인에서는 통계를 확인할 수 없어요. 연결 후 다시 눌러 주세요.' : error.code === 'STATS_DB_NOT_CONFIGURED' ? '통계를 준비하고 있어요.' : '통계를 불러오지 못했어요. 잠시 후 다시 눌러 주세요.';
   }).finally(() => {
     button.disabled = false;
     button.setAttribute('aria-busy', 'false');
@@ -986,6 +1016,7 @@ function loadStats() {
 }
 async function openStats() {
   await openSheet($('#statsSheet'));
+  selectedStatsDate = null;
   void loadStats();
 }
 const openInstallGuide = createInstallGuide({ openSheet });
@@ -1072,7 +1103,7 @@ async function boot() {
       clearInterval(state.lifecycleTimer);state.lifecycleTimer=null;
       return;
     }
-    void visitTracker.track({ force: ['pageshow', 'visibilitychange', 'online'].includes(event?.type) });
+    void visitTracker.track();
     clearInterval(state.lifecycleTimer);state.lifecycleTimer=setInterval(refreshVisible,60000);
     syncRadarTimer();
     if (state.view === 'weekly') void extras.loadWeekly();
