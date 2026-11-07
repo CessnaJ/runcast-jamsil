@@ -1,5 +1,6 @@
 const ID_KEY = 'runcast.visitor.v1';
-const REPORT_INTERVAL = 5 * 60_000;
+const ACK_KEY = 'runcast.visit.ack.v2';
+const ACK_VERSION = 'postgres-v1';
 const RETRY_INTERVAL = 60_000;
 export const VISITOR_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -28,7 +29,16 @@ export function createVisitTracker({
   isStandalone = () => globalThis.navigator?.standalone === true || globalThis.matchMedia?.('(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui), (display-mode: window-controls-overlay)').matches === true,
 } = {}) {
   const os = phoneOs(userAgent);
-  let id, pending = null, nextAttemptAt = 0;
+  let id, acknowledgment, pending = null, nextAttemptAt = 0;
+
+  function acknowledged() {
+    if (!acknowledgment) {
+      try { acknowledgment = JSON.parse((storage || globalThis.localStorage)?.getItem(ACK_KEY) || 'null'); } catch {}
+    }
+    return acknowledgment?.version === ACK_VERSION && acknowledgment.id === visitorId()
+      && now() >= acknowledgment.savedAt && now() < acknowledgment.expiresAt
+      && acknowledgment.expiresAt - acknowledgment.savedAt <= 24 * 60 * 60_000;
+  }
 
   function visitorId() {
     if (id) return id;
@@ -43,26 +53,32 @@ export function createVisitTracker({
     return id;
   }
 
-  async function request(options) {
+  async function request(options, history = false) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
+    const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
-      const response = await fetchImpl('/api/visit-stats', { ...options, cache: 'no-store', signal: controller.signal });
-      if (!response.ok) throw new Error('통계를 불러오지 못했어요.');
-      return await response.json();
+      const response = await fetchImpl(`/api/visit-stats${history ? '?days=14' : ''}`, { ...options, cache: 'no-store', signal: controller.signal });
+      const data = await response.json();
+      if (!response.ok) throw Object.assign(new Error('통계를 불러오지 못했어요.'), { code: data.code });
+      return data;
     } finally { clearTimeout(timeout); }
   }
 
-  function readStats() {
-    if (!os) return request({ method: 'GET' });
+  function report({ manual = false } = {}) {
+    if (!os || !canReport() || acknowledged()) return Promise.resolve(null);
     if (pending) return pending;
+    if (!manual && now() < nextAttemptAt) return Promise.resolve(null);
+    const sentAt = now();
     pending = Promise.resolve().then(() => request({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: visitorId(), mode: isStandalone() ? 'pwa' : 'web' }),
     })).then(stats => {
       const untilMidnight = Date.parse(stats.resetsAt) - Date.parse(stats.asOf);
-      nextAttemptAt = now() + Math.min(REPORT_INTERVAL, Math.max(0, untilMidnight));
+      if (stats.ackVersion === ACK_VERSION && Number.isFinite(untilMidnight) && untilMidnight > 0 && untilMidnight <= 24 * 60 * 60_000) {
+        acknowledgment = { version: ACK_VERSION, id: visitorId(), savedAt: sentAt, expiresAt: sentAt + untilMidnight };
+        try { (storage || globalThis.localStorage)?.setItem(ACK_KEY, JSON.stringify(acknowledgment)); } catch {}
+      } else nextAttemptAt = now() + RETRY_INTERVAL;
       return stats;
     }).catch(error => {
       nextAttemptAt = now() + RETRY_INTERVAL;
@@ -71,12 +87,15 @@ export function createVisitTracker({
     return pending;
   }
 
-  async function track({ force = false } = {}) {
-    if (!os || !canReport() || (!force && now() < nextAttemptAt)) return null;
-    try { return await readStats(); } catch { return null; }
+  async function track() {
+    try { return await report(); } catch { return null; }
   }
 
-  // Keep only the ID across launches. A daily "sent" flag would suppress
-  // re-registration after a serverless instance loses its in-memory cache.
+  async function readStats() {
+    try { await report({ manual: true }); } catch {}
+    return request({ method: 'GET' }, true);
+  }
+
+  // The database is authoritative; the acknowledgment only reduces requests.
   return { track, readStats };
 }

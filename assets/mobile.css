@@ -1437,6 +1437,16 @@ select:focus-visible,
 .stats-total p { display: flex; align-items: baseline; gap: 6px; margin: 8px 0; }
 .stats-total strong { color: var(--mint); font-size: 48px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .stats-total small { color: var(--muted); font-size: 12px; }
+.stats-history-label { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; margin: 18px 0 8px; font-size: 13px; }
+.stats-history-label small { color: var(--muted); font-size: 11px; }
+.stats-history { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 16px; }
+.stats-day { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-height: 68px; padding: 6px 0; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-2); color: var(--text); font-variant-numeric: tabular-nums; }
+.stats-day span { color: var(--muted); font-size: 10px; }
+.stats-day strong { font-size: 15px; }
+.stats-day small { color: var(--muted); font-size: 9px; }
+.stats-day[aria-pressed="true"] { border-color: var(--mint); background: color-mix(in srgb, var(--mint) 10%, var(--panel-2)); }
+.stats-day[aria-pressed="true"] strong { color: var(--mint); }
+.stats-day:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
 .stats-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
 .stats-table th, .stats-table td { height: 44px; padding: 8px 6px; border-bottom: 1px solid var(--line); text-align: right; }
 .stats-table th:first-child { padding-left: 0; text-align: left; }

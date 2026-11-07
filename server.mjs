@@ -1,5 +1,7 @@
 import { createCctvBroker } from './lib/cctv-broker.mjs';
 import { createVisitStats } from './lib/visit-stats.mjs';
+import { createPostgresVisitStore } from './lib/visit-db.mjs';
+import { loadRuntimeEnv } from './lib/runtime-env.mjs';
 import { validCctvUrl } from './assets/cctv-domain.mjs';
 export { parseItsCctvResponse } from './assets/cctv-domain.mjs';
 import { ROUTES, resolveLocation, normalizeWeekly, numberOrNull, evaluateRunWindow, runSampleMetrics } from './assets/weather-domain.mjs';
@@ -16,7 +18,8 @@ const PORT = Number(process.env.RUNCAST_PORT || 4173);
 const ROOT = resolve(new URL(".", import.meta.url).pathname);
 const RUNTIME_MODE = process.env.VERCEL || process.env.RUNCAST_MODE === "public" ? "public" : "local";
 const LOCAL_AI_ENABLED = RUNTIME_MODE === "local" && process.env.RUNCAST_AI_ENABLED !== "0";
-const LOCAL_KEYS = await loadLocalKeys();
+const ENVIRONMENT = await loadRuntimeEnv(ROOT);
+const LOCAL_KEYS = await loadLocalKeys(ROOT, ENVIRONMENT);
 const knownCctvUrls = new Set();
 const cctvBroker = createCctvBroker({apiKey:LOCAL_KEYS.itsApiKey,onCameras:cameras=>{for(const camera of cameras)knownCctvUrls.add(camera.url);}});
 let activeRadarKey = "";
@@ -25,7 +28,10 @@ const radarCache = new Map();
 // Vercel에서는 인스턴스별 best-effort cache이며, DB/Redis를 요구하지 않습니다.
 const rawCache = new Map();
 const inflightCache = new Map();
-const visitStats = createVisitStats();
+const visitStats = createVisitStats({
+  store: createPostgresVisitStore({ connectionString: ENVIRONMENT.DATABASE_URL }),
+  scope: ENVIRONMENT.VISIT_STATS_SCOPE || ENVIRONMENT.VERCEL_ENV || (ENVIRONMENT.VERCEL ? 'production' : 'development'),
+});
 const RAW_CACHE_MAX_ENTRIES = 120;
 const RAW_CACHE_FRESH_MS = 5 * 60_000;
 const RAW_CACHE_STALE_MS = 15 * 60_000;
@@ -1299,8 +1305,8 @@ export async function requestHandler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
     if (url.pathname === "/api/visit-stats") {
-      if (req.method === "GET") return sendJson(res, 200, visitStats.read());
-      if (req.method === "POST") return sendJson(res, 200, visitStats.record(await readJson(req), req.headers['user-agent']));
+      if (req.method === "GET") return sendJson(res, 200, await visitStats.read({ days: url.searchParams.has('days') ? Number(url.searchParams.get('days')) : 14 }));
+      if (req.method === "POST") return sendJson(res, 200, await visitStats.record(await readJson(req), req.headers['user-agent']));
       return sendJson(res, 405, { error: "Method not allowed" });
     }
     if (req.method === "GET" && url.pathname === "/api/config") return sendJson(res, 200, {
@@ -1340,6 +1346,7 @@ export async function requestHandler(req, res) {
         : null;
     sendJson(res, error.statusCode || 500, {
       error: error.message || "알 수 없는 오류",
+      ...(error.publicCode ? { code: error.publicCode } : {}),
       refresh: { stale: false, retryAt, failed: true },
       cache: { retryAt },
     });
