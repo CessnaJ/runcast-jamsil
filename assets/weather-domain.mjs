@@ -87,7 +87,7 @@ export function feelsLikeComparison(hourly, selectedTime, now = new Date()) {
 }
 export const WEAR_BANDS = [
   { below:-5, outer:'통기성 있는 방풍 재킷', top:'기모 긴팔', bottom:'기모 러닝팬츠', tights:'기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑 · 넥워머 · 패딩 조끼' },
-  { below:0, outer:'', top:'기모 긴팔', bottom:'얇은 기모 러닝팬츠', tights:'얇은 기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑 · 패딩 조끼' },
+  { below:0, outer:'얇은 바람막이', windOuter:'보통 두께 방풍재킷', top:'기모 긴팔', bottom:'얇은 기모 러닝팬츠', tights:'얇은 기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑 · 패딩 조끼' },
   { below:4, outer:'', top:'약간 두툼한 긴팔', bottom:'약간 두툼한 긴 러닝팬츠', tights:'약간 두툼한 긴 타이즈', socks:'두툼한 양말', accessories:'이어밴드 · 얇은 장갑' },
   { below:8, outer:'', top:'얇은 긴팔', bottom:'얇은 긴 러닝팬츠', tights:'얇은 긴 타이즈', socks:'일반 양말', accessories:'얇은 장갑 (선택)' },
   { below:12, outer:'', top:'얇은 긴팔', bottom:'얇은 긴 러닝팬츠', tights:'얇은 긴 타이즈', socks:'일반 양말', accessories:'' },
@@ -128,8 +128,8 @@ export function recommendRunningWear(hourly, startTime, preference = 'normal', n
   const wet = Number.isFinite(start.precipitation) && start.precipitation > 0;
   let outer = band.outer;
   const notes = [];
-  if (windy && adjusted < WEAR_POLICY.windLayerBelow && !outer) {
-    outer = adjusted < 0 ? '보통 두께 방풍재킷' : '얇은 바람막이';
+  if (windy && adjusted < WEAR_POLICY.windLayerBelow && (!outer || band.windOuter)) {
+    outer = band.windOuter || (adjusted < 0 ? '보통 두께 방풍재킷' : '얇은 바람막이');
   }
   if (wet) {
     if (adjusted < WEAR_POLICY.windLayerBelow) outer = '통기성 있는 방수 러닝 재킷';
