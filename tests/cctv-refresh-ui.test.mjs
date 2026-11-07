@@ -83,9 +83,24 @@ test('missing context is not reported as missing keys; only explicit configured 
   f.sandbox.renderCctv();assert.match(f.nodes.get('#cctvRail').innerHTML,/설정되지/);
 });
 
-test('manual retry observes rate limit but can resume after ten seconds',async()=>{
+test('manual CCTV retry is blocked at 1999 ms and resumes at exactly two seconds',async()=>{
   const f=await fixture();await f.sandbox.refreshContext(true);assert.equal(f.calls(),0);
-  await f.tick(10100);await f.sandbox.refreshContext(true);
+  await f.tick(1999);
+  assert.equal((await f.sandbox.refreshContext(true)).reason,'manual-rate');
+  assert.equal(f.calls(),0);
+  await f.tick(1);await f.sandbox.refreshContext(true);
+  assert.equal(f.calls(),1);assert.equal(f.timers.size,0);
+});
+
+test('manual CCTV retry still respects the server gate after its two-second interval',async()=>{
+  const f=await fixture();
+  f.state.context.cctv={retryAt:new Date(f.sandbox.Date.now()+20000).toISOString()};
+  await f.tick(2000);
+  assert.equal((await f.sandbox.refreshContext(true)).reason,'server-retry');
+  assert.equal(f.calls(),0);
+  await f.tick(17999);
+  assert.equal((await f.sandbox.refreshContext(true)).reason,'server-retry');
+  await f.tick(1);await f.sandbox.refreshContext(true);
   assert.equal(f.calls(),1);assert.equal(f.timers.size,0);
 });
 

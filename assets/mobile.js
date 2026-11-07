@@ -411,7 +411,7 @@ function refreshContext(manual = false) {
   const location={...state.location}, key=locationKey(location), previous=currentContext();
   const keepList=Array.isArray(previous?.cctvs);
   const cachedRetryAt=previous?.cctv?.retryAt || previous?.cctv?.serverRetryAt;
-  const requestOptions={manual,intervalMs:REFRESH_INTERVALS.context,dataAt:previous?.cctv?.fetchedAt,serverRetryAt:cachedRetryAt,fetcher:async({signal})=>{
+  const requestOptions={manual,manualMinIntervalMs:2_000,intervalMs:REFRESH_INTERVALS.context,dataAt:previous?.cctv?.fetchedAt,serverRetryAt:cachedRetryAt,fetcher:async({signal})=>{
     const aviationRequest=(async()=>{
       try {
         const response=await fetch("/api/mobile-context", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({location}),signal});
