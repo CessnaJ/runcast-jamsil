@@ -598,7 +598,15 @@ function drawMapOverlays() {
   const route = state.location;
   state.overlays.push(new naver.maps.Marker({ map: state.naverMap, position: new naver.maps.LatLng(route.lat, route.lon), icon: { content: '<div class="naver-marker-mobile route">RUN</div>', anchor: new naver.maps.Point(22, 16) } }));
   for (const camera of currentCctvs()) {
-    state.overlays.push(new naver.maps.Marker({ map: state.naverMap, position: new naver.maps.LatLng(camera.lat, camera.lon), title: camera.name, icon: { content: `<div class="naver-marker-mobile">${escapeHtml(camera.sector)}</div>`, anchor: new naver.maps.Point(18, 16) } }));
+    state.overlays.push(new naver.maps.Marker({
+      map: state.naverMap, position: new naver.maps.LatLng(camera.lat, camera.lon),
+      title: `${camera.name} · 영상 새 창으로 열기`,
+      icon: {
+        // A native link opens within the user's tap gesture, just like the CCTV cards.
+        content: `<a class="naver-cctv-marker" href="${escapeHtml(camera.url)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(camera.name)} 영상 새 창으로 열기"><span class="naver-marker-mobile">${escapeHtml(camera.sector)}</span></a>`,
+        size: new naver.maps.Size(44, 44), anchor: new naver.maps.Point(22, 22),
+      },
+    }));
   }
 }
 
