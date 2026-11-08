@@ -1325,6 +1325,17 @@ select:focus-visible,
   background: var(--mint);
   color: #07100e;
 }
+.naver-cctv-marker {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  text-decoration: none;
+}
+.naver-cctv-marker .naver-marker-mobile {
+  padding: 0 4px;
+}
 .bottom-sheet,
 .location-dialog {
   position: fixed;
