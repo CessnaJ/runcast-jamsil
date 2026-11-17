@@ -12,9 +12,9 @@ const wear=(temperature, comfort='normal', fit='pants', end={})=>recommendRunnin
 
 test('outfit switches at exact lower-inclusive boundaries without two-degree rounding',()=>{
   const cases=[
-    [-10,'기모 긴팔','기모 러닝팬츠','보온 양말'],
-    [-5,'기모 긴팔','얇은 기모 러닝팬츠','보온 양말'],
-    [0,'약간 두툼한 긴팔','약간 두툼한 긴 러닝팬츠','두툼한 양말'],
+    [-10,'기능성 기모 긴팔','기모 러닝팬츠','보온 양말'],
+    [-5,'기능성 기모 긴팔','얇은 기모 러닝팬츠','보온 양말'],
+    [0,'얇지 않은 긴팔 또는 레이어드','얇지 않은 긴 러닝팬츠','두툼한 양말'],
     [4,'얇은 긴팔','얇은 긴 러닝팬츠','일반 양말'],
     [8,'얇은 긴팔','얇은 긴 러닝팬츠','일반 양말'],
     [12,'얇은 긴팔','반바지','일반 양말'],
@@ -28,8 +28,8 @@ test('outfit switches at exact lower-inclusive boundaries without two-degree rou
     assert.deepEqual([result.top,result.bottom,result.socks],[top,bottom,socks],`${temperature}°`);
   }
   assert.equal(wear(-5.01).bottom,'기모 러닝팬츠');
-  assert.equal(wear(-0.01).top,'기모 긴팔');
-  assert.equal(wear(3.99).top,'약간 두툼한 긴팔');
+  assert.equal(wear(-0.01).top,'기능성 기모 긴팔');
+  assert.equal(wear(3.99).top,'얇지 않은 긴팔 또는 레이어드');
   assert.match(wear(7.99).accessories,/장갑/);
   assert.equal(wear(8).accessories,'');
   assert.equal(wear(11.99).bottom,'얇은 긴 러닝팬츠');
@@ -50,30 +50,31 @@ test('comfort changes classification only, and lower return temperature drives t
   assert.equal(wear(13,'hot').top,'얇은 반팔');
 });
 
-test('minus five to zero degrees includes a light shell even without wind or precipitation',()=>{
-  for (const temperature of [-5,-1,-0.01]) {
+test('minus five to eight degrees includes a light shell even without wind or precipitation',()=>{
+  for (const temperature of [-5,-1,-0.01,0,3.99,4,7.99]) {
     const result=wear(temperature);
     assert.equal(result.outer,'얇은 바람막이',`${temperature}°`);
     assert.equal(result.windy,false);assert.equal(result.wet,false);
   }
   assert.equal(wear(-1,'normal','pants',{windSpeed:3.99,gusts:7.99}).outer,'얇은 바람막이');
-  assert.equal(wear(-5.01).outer,'통기성 있는 방풍 재킷');
-  assert.equal(wear(0).outer,'');
+  assert.equal(wear(-5.01).outer,'방풍 재킷');
+  assert.equal(wear(8).outer,'');
 });
 
 test('pants and tights preserve warmth while shorts are independent of fit preference',()=>{
-  for (const [temperature,expected] of [[-8,'기모 긴 타이즈'],[-2,'얇은 기모 긴 타이즈'],[2,'약간 두툼한 긴 타이즈'],[6,'얇은 긴 타이즈'],[10,'얇은 긴 타이즈']]) {
+  for (const [temperature,expected] of [[-8,'기모 긴 타이즈'],[-2,'얇은 기모 긴 타이즈'],[2,'얇지 않은 긴 타이즈'],[6,'얇은 긴 타이즈'],[10,'얇은 긴 타이즈']]) {
     const pants=wear(temperature), tights=wear(temperature,'normal','tights');
     assert.equal(tights.bottom,expected);
     assert.deepEqual({...pants,bottom:tights.bottom},tights);
   }
   assert.equal(wear(12,'normal','tights').bottom,'반바지');
   assert.equal(wear(24,'normal','tights').bottom,'얇은 반바지');
-  assert.equal(wear(2,'normal','invalid').bottom,'약간 두툼한 긴 러닝팬츠');
+  assert.equal(wear(2,'normal','invalid').bottom,'얇지 않은 긴 러닝팬츠');
 });
 
 test('wind layers use either endpoint wind or interval gust without changing temperature or duplicating shells',()=>{
-  assert.equal(wear(6,'normal','pants',{windSpeed:3.99,gusts:7.99}).outer,'');
+  assert.equal(wear(6,'normal','pants',{windSpeed:3.99,gusts:7.99}).outer,'얇은 바람막이');
+  assert.equal(wear(10,'normal','pants',{windSpeed:3.99,gusts:7.99}).outer,'');
   for (const end of [{windSpeed:4},{gusts:8}]) {
     const result=wear(6,'normal','pants',end);
     assert.equal(result.outer,'얇은 바람막이');assert.equal(result.adjusted,6);
@@ -81,9 +82,11 @@ test('wind layers use either endpoint wind or interval gust without changing tem
   }
   const data=samples(6);data[0].windSpeed=4;
   assert.equal(recommendRunningWear(data,startTime).outer,'얇은 바람막이');
+  assert.equal(wear(10,'normal','pants',{windSpeed:4}).outer,'얇은 바람막이');
+  assert.equal(wear(10,'normal','pants',{gusts:8}).outer,'얇은 바람막이');
   assert.equal(wear(-2,'normal','pants',{windSpeed:4}).outer,'보통 두께 방풍재킷');
   assert.equal(wear(-1,'normal','pants',{gusts:8}).outer,'보통 두께 방풍재킷');
-  assert.equal(wear(-8,'normal','pants',{gusts:20}).outer,'통기성 있는 방풍 재킷');
+  assert.equal(wear(-8,'normal','pants',{gusts:20}).outer,'방풍 재킷');
   assert.equal(wear(12,'normal','pants',{windSpeed:4}).outer,'');
 });
 

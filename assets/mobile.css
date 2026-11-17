@@ -991,6 +991,22 @@ select:focus-visible,
   line-height: 1.6;
   margin-top: 5px;
 }
+.wear-reference-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  margin: 12px 0 4px;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  color: var(--cyan);
+  font-size: 14px;
+  text-align: left;
+}
+.wear-reference-link .ui-icon { width: 18px; height: 18px; transform: rotate(-90deg); }
 .wear-guide {
   margin: 24px 0 0;
 }
@@ -1378,6 +1394,90 @@ select:focus-visible,
   line-height: 1;
 }
 .sheet-head button .ui-icon { display: block; }
+.wear-reference-open { overflow: hidden; }
+.wear-reference-sheet {
+  width: min(100%, 1040px);
+  max-width: 100%;
+  height: 94dvh;
+  max-height: 94dvh;
+  padding: 0;
+  overflow: hidden;
+}
+.wear-reference-sheet[open] { display: flex; flex-direction: column; }
+.wear-reference-sheet > .sheet-head {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 12px 16px 4px;
+}
+.wear-reference-sheet h2 { font-size: 20px; }
+.wear-reference-intro { flex-shrink: 0; padding: 0 16px 12px; font-size: 13px; }
+#wearReferenceContext { font-weight: 600; }
+#wearReferencePreference { margin-top: 3px; color: var(--muted); }
+#wearReferenceRange { margin-top: 8px; color: var(--cyan); }
+#wearReferenceHint { margin-top: 10px; color: var(--muted); font-size: 12px; }
+.wear-reference-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-block: 1px solid var(--line);
+  scrollbar-color: var(--line) var(--panel);
+}
+.wear-reference-table {
+  width: 924px;
+  min-width: 100%;
+  border-spacing: 0;
+  table-layout: fixed;
+  font-size: 15px;
+  line-height: 1.65;
+}
+.wear-reference-temperature { width: 108px; }
+.wear-reference-outer { width: 160px; }
+.wear-reference-top { width: 184px; }
+.wear-reference-bottom { width: 172px; }
+.wear-reference-socks { width: 120px; }
+.wear-reference-accessories { width: 180px; }
+.wear-reference-table th,
+.wear-reference-table td {
+  padding: 16px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #101d17;
+  text-align: left;
+  vertical-align: top;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.wear-reference-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--panel-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.wear-reference-table tr > :first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  box-shadow: 1px 0 0 var(--line);
+  white-space: nowrap;
+}
+.wear-reference-table thead tr > :first-child { z-index: 4; }
+.wear-reference-table .selected-wear-band > * { background: #24391b; }
+.wear-reference-table .selected-wear-band > th { color: var(--mint); box-shadow: inset 3px 0 var(--mint), 1px 0 0 var(--line); }
+.wear-reference-selected { display: block; margin-top: 4px; font-size: 11px; font-weight: 500; }
+.wear-reference-none { color: var(--muted); }
+.wear-reference-footer {
+  flex-shrink: 0;
+  max-height: 30dvh;
+  overflow: auto;
+  padding: 10px 16px calc(10px + var(--safe-bottom));
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.wear-reference-footer summary { display: list-item; min-height: 44px; padding: 10px 0; cursor: pointer; }
+.wear-reference-footer details p { padding-bottom: 6px; }
 .install-sheet { max-width: 100%; overscroll-behavior: contain; }
 .install-sheet .sheet-head { margin-bottom: 4px; }
 .install-sheet h2 { font-size: 19px; }
