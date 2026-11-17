@@ -86,10 +86,10 @@ export function feelsLikeComparison(hourly, selectedTime, now = new Date()) {
   return {hour,delta:roundTemperature(current.feelsLike)-roundTemperature(reference.feelsLike),referenceLabel:isToday?'어제':'오늘'};
 }
 export const WEAR_BANDS = [
-  { below:-5, outer:'통기성 있는 방풍 재킷', top:'기모 긴팔', bottom:'기모 러닝팬츠', tights:'기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑 · 넥워머 · 패딩 조끼' },
-  { below:0, outer:'얇은 바람막이', windOuter:'보통 두께 방풍재킷', top:'기모 긴팔', bottom:'얇은 기모 러닝팬츠', tights:'얇은 기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑 · 패딩 조끼' },
-  { below:4, outer:'', top:'약간 두툼한 긴팔', bottom:'약간 두툼한 긴 러닝팬츠', tights:'약간 두툼한 긴 타이즈', socks:'두툼한 양말', accessories:'이어밴드 · 얇은 장갑' },
-  { below:8, outer:'', top:'얇은 긴팔', bottom:'얇은 긴 러닝팬츠', tights:'얇은 긴 타이즈', socks:'일반 양말', accessories:'얇은 장갑 (선택)' },
+  { below:-5, outer:'방풍 재킷', top:'기능성 기모 긴팔', bottom:'기모 러닝팬츠', tights:'기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑(필수) · 넥워머(필수) · 패딩 조끼(필수)' },
+  { below:0, outer:'얇은 바람막이', windOuter:'보통 두께 방풍재킷', top:'기능성 기모 긴팔', bottom:'얇은 기모 러닝팬츠', tights:'얇은 기모 긴 타이즈', socks:'보온 양말', accessories:'비니 · 보온 장갑(필수) · 패딩 조끼(필수)' },
+  { below:4, outer:'얇은 바람막이', top:'얇지 않은 긴팔 또는 레이어드', bottom:'얇지 않은 긴 러닝팬츠', tights:'얇지 않은 긴 타이즈', socks:'두툼한 양말', accessories:'귀 보온밴드 · 얇은 장갑(선택) · 패딩 조끼(선택)' },
+  { below:8, outer:'얇은 바람막이', top:'얇은 긴팔', bottom:'얇은 긴 러닝팬츠', tights:'얇은 긴 타이즈', socks:'일반 양말', accessories:'얇은 장갑 (선택)' },
   { below:12, outer:'', top:'얇은 긴팔', bottom:'얇은 긴 러닝팬츠', tights:'얇은 긴 타이즈', socks:'일반 양말', accessories:'' },
   { below:15, outer:'', top:'얇은 긴팔', bottom:'반바지', socks:'일반 양말', accessories:'' },
   { below:18, outer:'', top:'얇은 반팔', bottom:'반바지', socks:'일반 양말', accessories:'' },

@@ -142,3 +142,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 .vercel
+
+# Generated image drafts and browser verification artifacts
+output/imagegen/
+output/playwright/

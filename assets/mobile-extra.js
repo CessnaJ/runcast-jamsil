@@ -1,6 +1,7 @@
 import { ROUTES, resolveLocation, locationKey, recommendRunningWear, runningIntervals, nextDepartureTime, kstDay, roundTemperature, feelsLikeComparison } from './weather-domain.mjs';
 import { createRefreshScheduler } from './refresh-scheduler.mjs';
 import { icon } from './ui-icons.mjs';
+import { renderWearReference } from './wear-reference.mjs';
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const storage = {
@@ -215,6 +216,30 @@ export function createExtras(state, hooks) {
     window.scrollTo({top:pageScroll,behavior:'auto'});
     if(focusKey){const[k,v]=focusKey;const target=k==='id'?document.getElementById(v):root.querySelector(`[data-${k}="${v}"]`);target?.focus({preventScroll:true});}
   }
+  function renderWearReferenceSheet() {
+    const scroll=$('#wearReferenceScroll'), left=scroll.scrollLeft, top=scroll.scrollTop;
+    const recommendation=recommendRunningWear(intervals,selectedTime,preferences.comfort,true,preferences.bottomFit);
+    const comfort={cold:'추위를 많이 탐',normal:'보통',hot:'더위를 많이 탐'}[preferences.comfort];
+    const fit=preferences.bottomFit==='tights'?'타이즈':'팬츠';
+    const time=selectedTime?`${+selectedTime.slice(5,7)}/${+selectedTime.slice(8,10)} ${selectedTime.slice(11,16)} 출발`:'선택 시간';
+    const adjusted=Number.isFinite(recommendation?.adjusted)?` · 기준 체감 ${String(recommendation.adjusted).replace('-', '−')}°`:'';
+    $('#wearReferenceContext').textContent=`${time}${adjusted}`;
+    $('#wearReferencePreference').textContent=`내 체감: ${comfort} · 긴 하의: ${fit}`;
+    $('#wearReferenceRange').hidden=recommendation?.status!=='outside-range';
+    scroll.innerHTML=renderWearReference({recommendation,bottomFit:preferences.bottomFit});
+    scroll.scrollLeft=left;scroll.scrollTop=top;
+  }
+  async function openWearReference() {
+    renderWearReferenceSheet();
+    const dialog=$('#wearReferenceSheet'), scroll=$('#wearReferenceScroll');
+    await hooks.openSheet(dialog);
+    document.documentElement.classList.add('wear-reference-open');
+    requestAnimationFrame(()=>{
+      scroll.scrollLeft=0;
+      const selected=scroll.querySelector('.selected-wear-band');
+      scroll.scrollTop=selected?Math.max(0,selected.getBoundingClientRect().top-scroll.getBoundingClientRect().top+scroll.scrollTop-scroll.querySelector('thead').getBoundingClientRect().height-12):0;
+    });
+  }
   function renderWear() {
     const card=$('#wearCard');if(!card)return;const wasOpen=$('#comfortDetails')?.open;
     card.hidden=selectedDay<kstDay();if(card.hidden){card.innerHTML='';return;}
@@ -227,12 +252,15 @@ export function createExtras(state, hooks) {
       : [];
     const outfit=rows.length?`<dl class="wear-outfit">${rows.map(([label,item])=>`<div class="wear-row"><dt>${label}</dt><dd>${esc(item)}</dd></div>`).join('')}</dl>`:'';
     const notes=recommendation?.notes.map(note=>`<p class="wear-note">${esc(note)}</p>`).join('') || '';
-    const guide='<figure class="wear-guide"><a href="/assets/running-wear-guide.png" target="_blank" rel="noopener noreferrer" aria-label="체감온도별 러닝 옷차림 안내 이미지 크게 보기"><img src="/assets/running-wear-guide.png" width="724" height="2172" loading="lazy" decoding="async" alt="체감온도별 1시간 러닝 옷차림 안내. 영하 10도부터 24도 이상까지 9개 구간의 옷과 보조품을 보여줘요."></a><figcaption>이미지를 누르면 크게 볼 수 있어요.</figcaption></figure>';
-    card.innerHTML=`${past?'<p class="past-note">지난 시간 기준</p>':''}<p class="wear-title">1시간 러닝 옷차림</p><p class="wear-time">${time} · ${recommendation?`체감 ${temperatureWithUnit(recommendation.low)}–${temperatureWithUnit(recommendation.high)}`:'체감 자료 없음'}</p>${comparisonText?`<p class="wear-comparison">${comparisonText}</p>`:''}${outfit}${notes}<details id="comfortDetails" class="comfort-details" ${wasOpen?'open':''}><summary id="comfortSummary"><span>내 체감: ${{cold:'추위를 많이 탐',normal:'보통',hot:'더위를 많이 탐'}[preferences.comfort]} · ${preferences.bottomFit==='tights'?'타이즈':'팬츠'}</span>${icon('chevron')}</summary><fieldset class="wear-preference"><legend>내 체감</legend><div class="comfort-options" role="group" aria-label="내 체감">${[['cold','추위를 많이 탐'],['normal','보통'],['hot','더위를 많이 탐']].map(([v,l])=>`<button data-comfort="${v}" aria-pressed="${preferences.comfort===v}">${l}</button>`).join('')}</div></fieldset><fieldset class="wear-preference"><legend>긴 하의 선호</legend><div class="comfort-options" role="group" aria-label="긴 하의 선호">${[['pants','팬츠'],['tights','타이즈']].map(([v,l])=>`<button data-bottom-fit="${v}" aria-pressed="${(preferences.bottomFit||'pants')===v}">${l}</button>`).join('')}</div></fieldset><p>가벼운 1시간 러닝의 기본 조합이에요. 바람·습도는 체감온도에 반영되며, 더워지면 겉옷을 벗거나 지퍼를 열어 조절하세요.</p></details>${guide}`;
+    const guide='<figure class="wear-guide"><a href="/assets/running-wear-guide.png?v=20261118-text" target="_blank" rel="noopener noreferrer" aria-label="체감온도별 러닝 옷차림 안내 이미지 크게 보기"><img src="/assets/running-wear-guide.png?v=20261118-text" width="1448" height="4344" loading="lazy" decoding="async" alt="체감온도별 1시간 러닝 옷차림 안내. 영하 10도부터 24도 이상까지 9개 구간의 옷과 보조품을 보여줘요."></a><figcaption>이미지를 누르면 크게 볼 수 있어요.</figcaption></figure>';
+    card.innerHTML=`${past?'<p class="past-note">지난 시간 기준</p>':''}<p class="wear-title">1시간 러닝 옷차림</p><p class="wear-time">${time} · ${recommendation?`체감 ${temperatureWithUnit(recommendation.low)}–${temperatureWithUnit(recommendation.high)}`:'체감 자료 없음'}</p>${comparisonText?`<p class="wear-comparison">${comparisonText}</p>`:''}${outfit}${notes}<button id="openWearReference" class="wear-reference-link" aria-haspopup="dialog" aria-controls="wearReferenceSheet">전체 옷차림 기준표 보기 ${icon('chevron')}</button><details id="comfortDetails" class="comfort-details" ${wasOpen?'open':''}><summary id="comfortSummary"><span>내 체감: ${{cold:'추위를 많이 탐',normal:'보통',hot:'더위를 많이 탐'}[preferences.comfort]} · ${preferences.bottomFit==='tights'?'타이즈':'팬츠'}</span>${icon('chevron')}</summary><fieldset class="wear-preference"><legend>내 체감</legend><div class="comfort-options" role="group" aria-label="내 체감">${[['cold','추위를 많이 탐'],['normal','보통'],['hot','더위를 많이 탐']].map(([v,l])=>`<button data-comfort="${v}" aria-pressed="${preferences.comfort===v}">${l}</button>`).join('')}</div></fieldset><fieldset class="wear-preference"><legend>긴 하의 선호</legend><div class="comfort-options" role="group" aria-label="긴 하의 선호">${[['pants','팬츠'],['tights','타이즈']].map(([v,l])=>`<button data-bottom-fit="${v}" aria-pressed="${(preferences.bottomFit||'pants')===v}">${l}</button>`).join('')}</div></fieldset><p>가벼운 1시간 러닝의 기본 조합이에요. 바람·습도는 체감온도에 반영되며, 더워지면 겉옷을 벗거나 지퍼를 열어 조절하세요.</p></details>${guide}`;
+    $('#openWearReference')?.addEventListener('click',openWearReference);
     card.querySelectorAll('[data-comfort]').forEach(b=>b.onclick=()=>{preferences.comfort=b.dataset.comfort;persist();renderWear();$('#comfortDetails').open=true;card.querySelector(`[data-comfort="${preferences.comfort}"]`).focus({preventScroll:true});});
     card.querySelectorAll('[data-bottom-fit]').forEach(b=>b.onclick=()=>{preferences.bottomFit=b.dataset.bottomFit;persist();renderWear();$('#comfortDetails').open=true;card.querySelector(`[data-bottom-fit="${preferences.bottomFit}"]`).focus({preventScroll:true});});
+    if($('#wearReferenceSheet')?.open)renderWearReferenceSheet();
   }
   function boot() {
+    $('#wearReferenceSheet').addEventListener('close',()=>{document.documentElement.classList.remove('wear-reference-open');$('#openWearReference')?.focus({preventScroll:true});});
     updateLocationBar();$('#locationBtn').onclick=openPicker;$('#closeLocation').onclick=closePicker;$('#locationDialog').addEventListener('close',()=>{++dialogToken;});
     $('#retryPicker').onclick=()=>{hooks.resetNaverSdk();void loadPicker();};
     $('#applyCoordinates').onclick=()=>{const lat=Number($('#latitudeInput').value),lon=Number($('#longitudeInput').value);if(!safeLocation({lat,lon})){hooks.toast('국내 위치의 위도·경도를 입력해 주세요');return;}updateDraft(lat,lon,true);};

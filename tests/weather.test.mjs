@@ -37,6 +37,14 @@ test('installation guide module is served as JavaScript by the local server',asy
   assert.match(body,/export function createInstallGuide/);
 });
 
+test('wear reference module is served as JavaScript for the mobile import',async()=>{
+  let status,headers,body;
+  await requestHandler({url:'/assets/wear-reference.mjs',method:'GET',headers:{}},{writeHead(s,h){status=s;headers=h;},end(b){body=String(b);}});
+  assert.equal(status,200);
+  assert.match(headers['Content-Type'],/text\/javascript/);
+  assert.match(body,/export function renderWearReference/);
+});
+
 test('clothing guide serves the selected PNG while generation outputs stay private',async()=>{
   let status,headers,body;
   await requestHandler({url:'/assets/running-wear-guide.png',method:'GET',headers:{}},{writeHead(s,h){status=s;headers=h;},end(b){body=b;}});

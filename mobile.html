@@ -148,6 +148,12 @@
     <p class="source-note" id="settingsIntro">데이터 연결 상태를 확인하고 있어요.</p><div class="connection-list" id="connectionList" aria-live="polite"></div>
     <p class="source-note">Naver Maps Client ID는 지도용 공개 식별자이며, 기상청 키는 서버에서만 사용하고, ITS 키는 CCTV 조회 시 기기에 전달해요.</p>
   </dialog>
+  <dialog class="bottom-sheet wear-reference-sheet" id="wearReferenceSheet" aria-labelledby="wearReferenceTitle" aria-describedby="wearReferenceContext wearReferenceHint">
+    <div class="sheet-head"><h2 id="wearReferenceTitle">옷차림 기준표</h2><button data-close-sheet aria-label="옷차림 기준표 닫기" autofocus><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
+    <div class="wear-reference-intro"><p id="wearReferenceContext"></p><p id="wearReferencePreference"></p><p id="wearReferenceRange" hidden>선택 시간은 표의 추천 범위보다 추워요.</p><p id="wearReferenceHint">좌우로 밀어 전체 항목을 확인하세요.</p></div>
+    <div class="wear-reference-scroll" id="wearReferenceScroll" tabindex="0" role="region" aria-label="온도별 옷차림 비교표, 좌우와 위아래로 스크롤"></div>
+    <div class="wear-reference-footer"><p>바람·비에 따라 추천 겉옷은 달라질 수 있어요.</p><details><summary>추천 기준 안내</summary><p>출발·복귀 중 낮은 체감온도를 사용해요. 추위를 많이 타면 −2°, 더위를 많이 타면 +2°로 보정하며, 선택 시간의 구간을 강조해요. 표는 바람·강수 없는 기본 조합이고, 각 구간은 시작 온도 이상·끝 온도 미만이에요. −10° 미만은 개인별 방한 준비가 필요해요.</p></details></div>
+  </dialog>
   <dialog class="bottom-sheet stats-sheet" id="statsSheet" aria-labelledby="statsTitle" aria-describedby="statsPrivacyText statsNote">
     <div class="sheet-head"><h2 id="statsTitle">이용 통계</h2><button data-close-sheet aria-label="통계 닫기"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg></button></div>
     <p class="source-note stats-status" id="statsStatus" role="status">통계를 불러오고 있어요.</p>

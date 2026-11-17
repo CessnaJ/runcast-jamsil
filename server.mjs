@@ -1297,7 +1297,7 @@ async function getStatus() {
 async function serveFile(pathname, res) {
   const relative = pathname === "/" ? "index.html" : pathname.slice(1);
   const publicFiles = new Set([
-    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/install-guide.mjs", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/forecast-details.mjs", "assets/refresh-scheduler.mjs", "assets/visit-tracker.mjs", "assets/ui-icons.mjs", "assets/cctv-domain.mjs", "assets/cctv-client.mjs", "sw.js",
+    "index.html", "mobile.html", "manifest.webmanifest", "assets/mobile.js", "assets/mobile.css", "assets/install-guide.mjs", "assets/weather-domain.mjs", "assets/mobile-extra.js", "assets/wear-reference.mjs", "assets/forecast-details.mjs", "assets/refresh-scheduler.mjs", "assets/visit-tracker.mjs", "assets/ui-icons.mjs", "assets/cctv-domain.mjs", "assets/cctv-client.mjs", "sw.js",
     "assets/favicon.svg", "assets/apple-touch-icon.png", "assets/apple-touch-icon-v2.png", "assets/pwa-icon-192.png",
     "assets/pwa-icon-512.png", "assets/pwa-icon-maskable-512.png", "assets/og-image.png", "assets/running-wear-guide.png",
     "assets/apple-startup-1320x2868.png", "assets/apple-startup-1206x2622.png",
