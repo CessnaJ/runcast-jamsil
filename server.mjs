@@ -988,7 +988,11 @@ function oldestForecastFetch(trace) {
 
 function refreshMetadata(trace = []) {
   const retryStates = ["stale-if-error", "stale-cooldown", "negative-hit"];
-  const relevant = trace.filter(event => event?.stale || retryStates.includes(event?.state) || event?.retryAt);
+  // A refresh starts with the previous entry's error metadata. Only the last
+  // result for each source determines whether the response still needs retry.
+  const latest = new Map();
+  for (const event of trace) latest.set(buildRawCacheKey(event), event);
+  const relevant = [...latest.values()].filter(event => event?.stale || retryStates.includes(event?.state) || event?.retryAt);
   const retryValues = relevant.map(event => Date.parse(event.retryAt || "")).filter(Number.isFinite);
   return {
     stale: relevant.some(event => event?.stale || ["stale-if-error", "stale-cooldown"].includes(event?.state)),
