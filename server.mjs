@@ -2,6 +2,8 @@ import { createCctvBroker } from './lib/cctv-broker.mjs';
 import { createVisitStats } from './lib/visit-stats.mjs';
 import { createPostgresVisitStore } from './lib/visit-db.mjs';
 import { loadRuntimeEnv } from './lib/runtime-env.mjs';
+import { fetchJson } from './lib/upstream-http.mjs';
+import { createPostgresWeatherStore, logWeatherCache } from './lib/weather-cache-db.mjs';
 import { validCctvUrl } from './assets/cctv-domain.mjs';
 export { parseItsCctvResponse } from './assets/cctv-domain.mjs';
 import { ROUTES, resolveLocation, normalizeWeekly, numberOrNull, evaluateRunWindow, runSampleMetrics } from './assets/weather-domain.mjs';
@@ -24,10 +26,14 @@ const knownCctvUrls = new Set();
 const cctvBroker = createCctvBroker({apiKey:LOCAL_KEYS.itsApiKey,cctvType:LOCAL_AI_ENABLED?'3':'5',onCameras:cameras=>{for(const camera of cameras)knownCctvUrls.add(camera.url);}});
 let activeRadarKey = "";
 const radarCache = new Map();
-// UI 결과가 아닌 외부 원천 응답만 인스턴스 메모리에 둡니다.
-// Vercel에서는 인스턴스별 best-effort cache이며, DB/Redis를 요구하지 않습니다.
+// 원천 응답의 빠른 메모리 캐시. 주간 예보는 PostgreSQL에도 성공 자료를 보관합니다.
 const rawCache = new Map();
 const inflightCache = new Map();
+const weatherStore = createPostgresWeatherStore({
+  connectionString: ENVIRONMENT.DATABASE_URL,
+  scope: ENVIRONMENT.VERCEL_ENV || (ENVIRONMENT.VERCEL ? 'production' : 'development'),
+});
+let weatherCacheConfigReported = false;
 const visitStats = createVisitStats({
   store: createPostgresVisitStore({ connectionString: ENVIRONMENT.DATABASE_URL }),
   scope: ENVIRONMENT.VISIT_STATS_SCOPE || ENVIRONMENT.VERCEL_ENV || (ENVIRONMENT.VERCEL ? 'production' : 'development'),
@@ -111,33 +117,6 @@ async function readJson(req) {
 
 function timeoutSignal(ms) {
   return AbortSignal.timeout(ms);
-}
-
-async function fetchJson(url, options = {}) {
-  const response = await fetch(url, {
-    ...options,
-    signal: timeoutSignal(options.timeout || 18_000),
-    headers: {
-      "User-Agent": "RunCast-Jamsil/0.1 local-dashboard",
-      Accept: "application/json",
-      ...(options.headers || {}),
-    },
-  });
-  if (!response.ok) {
-    const error = new Error(`외부 자료 요청 실패 (${response.status})`);
-    error.statusCode = response.status;
-    const retryAfter = response.headers.get("Retry-After");
-    if (retryAfter) {
-      const seconds = Number(retryAfter);
-      if (Number.isFinite(seconds)) error.retryAfterMs = Math.max(0, seconds * 1000);
-      else {
-        const retryAt = Date.parse(retryAfter);
-        if (Number.isFinite(retryAt)) error.retryAt = retryAt;
-      }
-    }
-    throw error;
-  }
-  return response.json();
 }
 
 /** ITS의 비표준 HTTPS 9443 포트를 Node 소켓으로 직접 호출합니다. */
@@ -327,10 +306,10 @@ function retryDelayFrom(error, fallbackMs) {
 export async function cachedRawLoad(key, loader, options = {}) {
   const {
     trace = null, freshMs = RAW_CACHE_FRESH_MS, staleMs = RAW_CACHE_STALE_MS,
-    failureMs = RAW_CACHE_FAILURE_MS, sourceIssuedAt = null,
+    failureMs = RAW_CACHE_FAILURE_MS, sourceIssuedAt = null, persistence = null, validate = null,
   } = options;
   const now = Date.now();
-  const existing = rawCache.get(key);
+  let existing = rawCache.get(key);
   if (existing?.value !== undefined && now < existing.expiresAt) {
     touchRawCache(key, existing);
     cacheDiagnostic(trace, key, "fresh-hit", existing);
@@ -357,8 +336,30 @@ export async function cachedRawLoad(key, loader, options = {}) {
     return value;
   }
   cacheDiagnostic(trace, key, existing?.value !== undefined ? "refresh" : "miss", existing);
-  const staleEntry = existing?.value !== undefined && now < existing.staleUntil ? existing : null;
   const task = (async () => {
+    // Put the DB read inside the same in-flight task as the provider request.
+    // New instances can restore a fresh result or an outage fallback; DB
+    // failures never discard memory weather or prevent a live provider call.
+    if (persistence?.configured) {
+      try {
+        const saved = await persistence.read(key);
+        if (saved && (existing?.value === undefined || saved.fetchedAt > existing.fetchedAt)) {
+          if (saved.value == null || ![saved.fetchedAt, saved.expiresAt, saved.staleUntil].every(Number.isFinite)
+            || saved.fetchedAt > Date.now() || saved.expiresAt <= saved.fetchedAt || saved.staleUntil < saved.expiresAt) {
+            throw Object.assign(new Error('Invalid stored weather'), { code: 'CACHE_PAYLOAD_INVALID' });
+          }
+          if (Date.now() < saved.staleUntil) {
+            try { validate?.(saved.value, saved.fetchedAt); }
+            catch { throw Object.assign(new Error('Invalid stored weather coverage'), { code: 'CACHE_PAYLOAD_INVALID' }); }
+            existing = saved;
+            touchRawCache(key, saved); trimRawCache();
+            cacheDiagnostic(trace, key, 'persistent-hit', saved);
+            if (Date.now() < saved.expiresAt) return saved.value;
+          }
+        }
+      } catch (error) { logWeatherCache('read', error); }
+    }
+    const staleEntry = existing?.value !== undefined && Date.now() < existing.staleUntil ? existing : null;
     try {
       const value = await loader();
       const fetchedAt = Date.now();
@@ -369,6 +370,10 @@ export async function cachedRawLoad(key, loader, options = {}) {
       // 만료된 기존 key를 갱신한 경우에도 Map의 마지막(MRU)으로 이동시킵니다.
       touchRawCache(key, entry); trimRawCache();
       cacheDiagnostic(trace, key, "stored", entry);
+      if (persistence?.configured) {
+        try { await persistence.write(key, entry); }
+        catch (error) { logWeatherCache('write', error); }
+      }
       return value;
     } catch (error) {
       if (staleEntry) {
@@ -389,11 +394,10 @@ export async function cachedRawLoad(key, loader, options = {}) {
       const retryAt = failedAt + retryDelayFrom(error, failureMs);
       const entry = { error: error?.message || "원천 자료 요청 실패", fetchedAt: failedAt, expiresAt: retryAt, staleUntil: retryAt, retryAt, sourceIssuedAt: null };
       rawCache.set(key, entry); trimRawCache();
+      error.retryAt = retryAt;
       throw error;
-    } finally {
-      inflightCache.delete(key);
     }
-  })();
+  })().finally(() => inflightCache.delete(key));
   inflightCache.set(key, task);
   return task;
 }
@@ -805,7 +809,7 @@ async function getMultiModelForecast(route, minutesList, now = new Date(), cache
   const payload = await cachedRawLoad(buildRawCacheKey({
     provider: "open-meteo", dataset: "forecast", location: `lat${route.lat.toFixed(4)}-lon${route.lon.toFixed(4)}`,
     cycle: "rolling-2d", variant: `hourly-pop-precip-${modelSet}`,
-  }), () => fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, { timeout: 15_000 }), { trace: cacheTrace });
+  }), () => fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, { timeout: 15_000, dataset: 'multi-model' }), { trace: cacheTrace });
   const hourly = payload?.hourly || {};
   const receipt = forecastReceipt(cacheTrace, 'open-meteo', 'forecast');
   const times = (hourly.time || []).map((value) => new Date(`${value}:00+09:00`));
@@ -1002,20 +1006,26 @@ function refreshMetadata(trace = []) {
 
 async function weeklyForecast(body) {
   const location = resolveLocation(body), trace = [];
+  if (!weatherStore.configured && !weatherCacheConfigReported) {
+    weatherCacheConfigReported = true;
+    logWeatherCache('disabled', { code: 'DB_NOT_CONFIGURED' });
+  }
   const params = new URLSearchParams({
     latitude: String(location.lat), longitude: String(location.lon), timezone: "Asia/Seoul", forecast_days: "8", past_days: "1", wind_speed_unit: "ms",
     hourly: "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,precipitation_probability,wind_speed_10m,wind_direction_10m,wind_gusts_10m,weather_code",
     daily: "temperature_2m_min,temperature_2m_max,weather_code,sunrise,sunset",
   });
   // Eighth day's midnight provides the return sample for day seven at 23:00.
-  const payload = await cachedRawLoad(buildRawCacheKey({ provider: "open-meteo", dataset: "weekly", location: `${location.lat},${location.lon}`, cycle: kstDateKey(new Date()), variant: "v3-8d-past1-ms-solar" }), async () => {
-    const data = await fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, { timeout: 15000 });
-    normalizeWeekly(data, location, new Date().toISOString());
+  // Keep the latest success across Korean midnight as well as deployments.
+  const payload = await cachedRawLoad(buildRawCacheKey({ provider: "open-meteo", dataset: "weekly", location: `${location.lat},${location.lon}`, cycle: 'latest', variant: "v3-8d-past1-ms-solar" }), async () => {
+    const data = await fetchJson(`https://api.open-meteo.com/v1/forecast?${params}`, { timeout: 15000, dataset: 'weekly' });
+    normalizeWeekly(data, location, new Date(Date.now()).toISOString());
     return data;
-  }, { trace, freshMs: 30*60000, staleMs: 7*86400000 });
+  }, { trace, freshMs: 30*60000, staleMs: 7*86400000, persistence: weatherStore,
+    validate: (data, at) => normalizeWeekly(data, location, new Date(at).toISOString(), new Date(Date.now())) });
   const entry = trace.filter(t => t.fetchedAt).at(-1);
   if (!entry) throw new Error("예보 조회 시각을 확인하지 못했습니다.");
-  const normalized = normalizeWeekly(payload, location, entry.fetchedAt);
+  const normalized = normalizeWeekly(payload, location, entry.fetchedAt, new Date(Date.now()));
   const refresh = refreshMetadata(trace);
   return { ...normalized, refresh, cache: { stale: refresh.stale, retryAt: refresh.retryAt } };
 }
