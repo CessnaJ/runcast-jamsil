@@ -44,8 +44,9 @@ POST `/api/weekly-forecast`는 같은 위치 계약을 사용한다.
 - 기온 °C, 풍속 m/s, 강수량 mm. Open-Meteo 강수량은 해당 시각 직전 1시간 누적이다. UI는 별도 순수 runningIntervals()로 출발 구간을 만든다. 06시 열의 강수량·강수확률·돌풍은 07시 값을 사용하고, 기온·체감·풍속은 06시 값을 쓴다. 옷차림은 이 모델의 출발·복귀 체감과 풍속, 해당 구간 돌풍을 공유한다. 정확한 복귀 시각이 없으면 null이며 마지막 값을 복제하지 않는다. 러닝 결론의 기온도 이 hourly 배열에서 날짜·epoch bucket으로 직접 찾고 주간 표와 동일하게 `toFixed(0)` 반올림을 적용한다. 숫자가 아닌 문자열·누락값은 0으로 바꾸지 않는다.
 - 공급자에는 8일을 요청하되 7개 날짜만 노출한다. 7일째 23시 출발의 복귀 시각을 위해 8일째 00시가 필요하다.
 - 데이터가 없으면 null 또는 오류를 반환하며 0으로 바꾸지 않는다. Open-Meteo 기본 모델 선택을 사용한다. 기존 결론용 2일 다중모델 조회는 독립적이다.
-- 주간 조회는 15초 공급자 타임아웃, 원천 메모리 캐시는 30분/오류 시 최대 7일이며 Vercel 인스턴스 간 공유되지 않는다. 브라우저 캐시는 인스턴스 재시작에도 마지막 조회 결과를 유지한다.
-- `/api/mobile-forecast`와 `/api/weekly-forecast`는 원천 stale fallback이 사용된 경우 additive `refresh: { stale, retryAt, failed }` 및 `cache.retryAt` 메타를 전달한다. `dataUpdatedAt`/`fetchedAt`는 원래 성공 자료 시각이며 retryAt은 다음 원천 재시도 가능 시각이다. 서버 캐시·stale cooldown은 인스턴스 메모리 범위에서만 보장하며 Redis/DB 기반 전역 rate limit은 제공하지 않는다.
+- 주간 조회는 15초 공급자 타임아웃이다. 메모리 캐시와 기존 `DATABASE_URL`의 PostgreSQL에 마지막 성공 원천 응답을 30분 TTL/오류 시 최대 7일로 보관한다. DB에는 환경·위치·계약 버전별 최신 성공만 저장하며 재시작·재배포 후에도 복구한다. 키는 한국 날짜를 포함하지 않아 자정을 넘은 장애에도 남은 예보를 재사용한다. 응답의 `baseDate`는 현재 한국 날짜이며 `fetchedAt`·`expiresAt`는 원래 수집 시각을 유지한다. 없는 미래 날짜를 채우지 않는다. 브라우저 캐시도 마지막 조회 결과를 유지한다. [테이블 준비·확인](weather-cache-setup.md).
+- `/api/mobile-forecast`와 `/api/weekly-forecast`는 원천 stale fallback이 사용된 경우 additive `refresh: { stale, retryAt, failed }` 및 `cache.retryAt` 메타를 전달한다. `dataUpdatedAt`/`fetchedAt`는 원래 성공 자료 시각이며 retryAt은 다음 원천 재시도 가능 시각이다. 진행 중 요청 공유와 stale cooldown은 인스턴스 메모리 범위에서만 보장하며 DB 기반 전역 rate limit은 제공하지 않는다. 주간 예보 DB 읽기·쓰기가 실패해도 정상 원천 응답은 유지한다.
+- 원천 JSON 요청 실패는 `[UPSTREAM_HTTP]`, DB 미설정·읽기·쓰기 오류는 `[WEATHER_CACHE]`로 분리해 기록한다. 키·좌표·URL 쿼리·헤더·본문·원본 오류 메시지를 기록하지 않는다.
 - `/api/mobile-context`의 CCTV 결과도 `cctv.usableUntil`, `cctv.retryAt`, `cctv.stale`을 별도로 가진다. 주간 화면의 주기 검사는 CCTV 요청을 시작하지 않는다.
 
 새 API 키나 주소 검색 서비스 활성화는 필요하지 않다. 기존 네이버 Dynamic Map 공개 ID와 허용 도메인 설정을 재사용한다. 기상청·ITS·API허브 키는 기존 서버 환경변수만 사용한다.

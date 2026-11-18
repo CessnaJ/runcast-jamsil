@@ -62,12 +62,12 @@ export function roundTemperature(value) {
   const rounded = Number(Number(value).toFixed(0));
   return Object.is(rounded, -0) ? 0 : rounded;
 }
-export function normalizeWeekly(payload, location, fetchedAt) {
+export function normalizeWeekly(payload, location, fetchedAt, asOf = new Date(fetchedAt)) {
   const h = payload.hourly || {}, d = payload.daily || {};
   const variables = { temperature:'temperature_2m', feelsLike:'apparent_temperature', humidity:'relative_humidity_2m', precipitation:'precipitation', probability:'precipitation_probability', windSpeed:'wind_speed_10m', gusts:'wind_gusts_10m', windDirection:'wind_direction_10m', code:'weather_code' };
   const hourly = (h.time || []).filter(time => typeof time === 'string' && time).map((time, i) => ({ time: `${time}:00+09:00`, ...Object.fromEntries(Object.entries(variables).map(([key, field]) => [key, strictNumberOrNull(h[field]?.[i])])) }));
   const solarTime = (value, date) => typeof value === 'string' && value.startsWith(`${date}T`) && /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value) ? value : null;
-  const baseDate=kstDay(new Date(fetchedAt)), yesterday=kstDay(new Date(Date.parse(`${baseDate}T00:00:00+09:00`)-86400000));
+  const baseDate=kstDay(asOf), yesterday=kstDay(new Date(Date.parse(`${baseDate}T00:00:00+09:00`)-86400000));
   const allDays = (d.time || []).map((date, i) => ({ date, low:strictNumberOrNull(d.temperature_2m_min?.[i]), high:strictNumberOrNull(d.temperature_2m_max?.[i]), code:strictNumberOrNull(d.weather_code?.[i]), sunrise:solarTime(d.sunrise?.[i],date), sunset:solarTime(d.sunset?.[i],date) })).filter(day=>typeof day.date==='string' && day.date);
   const daily=allDays.filter(day=>day.date>=baseDate).slice(0,7), pastDaily=allDays.filter(day=>day.date===yesterday);
   if (!hourly.length || !daily.length || !hourly.some(h => h.temperature != null)) throw new Error('주간 예보 자료가 없습니다.');
